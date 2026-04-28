@@ -125,26 +125,6 @@ Swap `examples/model.osi.yaml` for a Dremio- or Strategy-exported OSI YAML (with
 - `docs/ARCHITECTURE.md` — components, why no Cube, vendor-swap pattern.
 - `docs/DEMO_SCRIPT.md` — the five-minute panel walkthrough.
 
-## Is the OSI Bridge a Cube replacement?
-
-No. It is deliberately the minimum viable OSI translation layer. Side by side:
-
-| Capability | Cube | OSI Bridge (this repo) |
-|------------|------|------------------------|
-| Hold the semantic model | Cube's own YAML/JS | OSI v1.0 (open standard) |
-| Translate semantic model → SQL | yes | yes |
-| Query API for downstream consumers | REST + GraphQL + SQL wire + MDX | MCP only (3 tools) |
-| Caching / pre-aggregations | yes (Cube Store) | no — delegated to UC Metric View materialisation |
-| Row-level security / RBAC | yes (context-based) | no — delegated to Unity Catalog |
-| Multi-database connectors | 30+ sources | Databricks only |
-| Multi-tenancy, JWT auth | yes | no |
-| Playground / admin UI | yes (Cube Cloud) | no |
-| Lines of code | hundreds of thousands | ~250 |
-
-The substantive shift: with Cube, **Cube was the contract**. With this approach, **OSI YAML is the contract** — vendor-neutral, jointly owned by the OSI working group. Swap the Bridge for any other OSI-aware MCP server, or swap Databricks for Dremio / Strategy, and the agent works unchanged.
-
-If your roadmap needs the other 95% of Cube (pre-aggs, multi-source joins, BI wire protocols, admin UI), grow the Bridge selectively or pick an OSI-compliant commercial product to play that middleware role — keeping OSI as the contract either way.
-
 ## Security notes for forks
 
 - `.env` is gitignored; never commit real tokens.
