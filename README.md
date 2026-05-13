@@ -55,6 +55,10 @@ The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MC
 | `docs/DEMO_SCRIPT.md` | The 5-minute hackathon demo |
 | `deploy/upload_to_workspace.sh` | Pushes notebooks into your Databricks workspace |
 
+## Testing everything end-to-end
+
+See [TESTING.md](TESTING.md) for a single linear walkthrough that exercises every phase (registry → ODCS → portal → vendor adapters → provisioning → producer journey → lineage → approval). Each step lists the command, what to expect, and which credentials it needs — most of the bridge is testable offline.
+
 ## Prerequisites
 
 - Python 3.11+ (`python3 --version`)
