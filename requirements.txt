@@ -6,5 +6,8 @@ fastmcp>=0.4.0
 openai>=1.40.0
 python-dotenv>=1.0.0
 pydantic>=2.6.0
+# Portal (FastAPI + uvicorn).
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
 # Optional — only required for the Lakebase / Postgres model store.
 psycopg[binary]>=3.1; extra != "no-pg"

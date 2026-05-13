@@ -1,14 +1,9 @@
 """OSI Bridge MCP server.
 
-Loads one or more OSI YAML models into a registry and exposes MCP tools
-that an agent (Gemini, Claude, etc.) consumes:
-
-  - list_models       — what semantic models are available
-  - list_metrics      — metrics across one or all models
-  - list_dimensions   — dimensions of a given model
-  - query_metric      — execute a metric query against the backing engine
-
-Backend: Databricks SQL warehouse, queried via databricks-sql-connector.
+Wraps the plain-Python tool functions from `osi_bridge.tools` in FastMCP
+decorators so any MCP-capable agent (Gemini, Claude, etc.) can consume them
+over SSE. The portal (`portal.app`) imports the same functions directly,
+skipping the network hop.
 """
 from __future__ import annotations
 
@@ -16,12 +11,11 @@ import argparse
 import os
 from typing import Any
 
-from databricks import sql
 from dotenv import load_dotenv
 from fastmcp import FastMCP
 
+from osi_bridge import tools as _tools
 from osi_bridge.registry import Registry
-from osi_bridge.translator import build_sql
 
 load_dotenv(override=True)
 
@@ -29,31 +23,10 @@ mcp = FastMCP("osi-bridge")
 _REGISTRY = Registry()
 
 
-def _run_sql(sql_text: str) -> list[dict[str, Any]]:
-    host = os.environ["DATABRICKS_HOST"].replace("https://", "")
-    http_path = os.environ["DATABRICKS_HTTP_PATH"]
-    token = os.environ["DATABRICKS_TOKEN"]
-    with sql.connect(server_hostname=host, http_path=http_path, access_token=token) as c:
-        with c.cursor() as cur:
-            cur.execute(sql_text)
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, r)) for r in cur.fetchall()]
-
-
 @mcp.tool()
 def list_models() -> list[dict[str, Any]]:
     """List all OSI semantic models available to the bridge."""
-    out = []
-    for name, m in _REGISTRY.items():
-        sm = m["semantic_model"][0]
-        out.append({
-            "name": name,
-            "description": sm.get("description"),
-            "source": (sm.get("datasets") or [{}])[0].get("source"),
-            "metric_count": len(sm.get("metrics", [])),
-            "dimension_count": sum(len(ds.get("fields", [])) for ds in sm.get("datasets", [])),
-        })
-    return out
+    return _tools.list_models(_REGISTRY)
 
 
 @mcp.tool()
@@ -63,20 +36,7 @@ def list_metrics(model: str | None = None) -> list[dict[str, Any]]:
     Each row carries the `model` it belongs to so the agent can route a
     follow-up `query_metric` call.
     """
-    target = [model] if model else _REGISTRY.names()
-    out = []
-    for name in target:
-        sm = _REGISTRY.get(name)["semantic_model"][0]
-        for m in sm.get("metrics", []):
-            ai = m.get("ai_context", {}) or {}
-            out.append({
-                "model": name,
-                "name": m["name"],
-                "display_name": ai.get("display_name"),
-                "description": m.get("description"),
-                "synonyms": ai.get("synonyms", []),
-            })
-    return out
+    return _tools.list_metrics(_REGISTRY, model)
 
 
 @mcp.tool()
@@ -86,18 +46,7 @@ def list_dimensions(model: str, metric: str | None = None) -> list[dict[str, Any
     `metric` is currently informational — Databricks Metric Views allow any
     dimension on any metric within the same view.
     """
-    sm = _REGISTRY.get(model)["semantic_model"][0]
-    fields = sm["datasets"][0]["fields"]
-    return [
-        {
-            "name": f["name"],
-            "display_name": (f.get("ai_context") or {}).get("display_name"),
-            "is_time": (f.get("dimension") or {}).get("is_time", False),
-            "synonyms": (f.get("ai_context") or {}).get("synonyms", []),
-            "description": f.get("description"),
-        }
-        for f in fields
-    ]
+    return _tools.list_dimensions(_REGISTRY, model, metric)
 
 
 @mcp.tool()
@@ -109,27 +58,8 @@ def query_metric(
     time_grain: str | None = None,
     limit: int = 1000,
 ) -> dict[str, Any]:
-    """Query a metric in `model` with optional dimensions, filters, and time grain.
-
-    Args:
-        model: model name from list_models()
-        metric: metric name from list_metrics(model=...)
-        dimensions: dimension names from list_dimensions(model=...)
-        filters: list of {column, op, value}
-        time_grain: 'day' | 'week' | 'month' | 'quarter' | 'year'
-        limit: row cap (default 1000)
-    """
-    osi = _REGISTRY.get(model)
-    sql_text = build_sql(
-        osi_model=osi,
-        metrics=[metric],
-        dimensions=dimensions or [],
-        filters=filters or [],
-        time_grain=time_grain,
-        limit=limit,
-    )
-    rows = _run_sql(sql_text)
-    return {"model": model, "sql": sql_text, "rows": rows, "row_count": len(rows)}
+    """Query a metric in `model` with optional dimensions, filters, and time grain."""
+    return _tools.query_metric(_REGISTRY, model, metric, dimensions, filters, time_grain, limit)
 
 
 def main() -> None:

@@ -26,9 +26,15 @@ The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MC
 | `notebooks/11_tpc_sales_metric_view.py` | TPC benchmark sales Metric View (defaults to `samples.tpch.lineitem`) |
 | `notebooks/12_lidlplus_metric_view.py` | Seeds a synthetic lidlplus transactions table + Metric View |
 | `osi_bridge/server.py` | MCP server (registry of OSI models) Gemini connects to |
+| `osi_bridge/tools.py` | Plain-Python implementations of the four bridge tools |
 | `osi_bridge/registry.py` | Delegates to a pluggable `ModelStore` (file / sqlite / lakebase) |
 | `osi_bridge/exporter.py` | Standalone Databricks Metric View → OSI YAML converter |
 | `osi_bridge/translator.py` | OSI metric request → Databricks SQL with `MEASURE()` |
+| `osi_bridge/search.py` | Metric search ranker + Gemini-backed AI fallback |
+| `portal/app.py` | FastAPI portal (catalog, search, chat, access requests) |
+| `portal/chat.py` | In-process Gemini MCP-loop chat handler |
+| `portal/static/index.html` + `app.js` | preact/htm single-page UI, no build step |
+| `portal/app.yaml` | Databricks Apps manifest for one-command deploy |
 | `osi_bridge/parsers/osi.py` | OSI YAML loader + validator |
 | `osi_bridge/parsers/odcs.py` | ODCS v3 YAML → canonical OSI dict |
 | `osi_bridge/parsers/confluence.py` | Confluence page → OSI `ai_context` enrichment |
@@ -176,7 +182,27 @@ python -m osi_bridge.server --store lakebase   # reads $OSI_BRIDGE_PG_DSN
 
 Each ingestion appends an immutable row to `osi_model_versions` — the audit trail Schwarz needs for contract-revision history.
 
-### 11. (Stretch) Multi-vendor demo
+### 11. Run the portal (Phase 2)
+
+```bash
+# Make sure the SQLite store has been populated by step 10.
+PORTAL_STORE=sqlite uvicorn portal.app:app --host 0.0.0.0 --port 8000
+# Then open http://localhost:8000
+```
+
+The portal serves three pages:
+
+- **Catalog** — typeahead search across every metric, ranked by name/synonym/display-name match. Zero-hit searches trigger an AI fallback that asks Gemini to suggest the closest model and surface the owner.
+- **Metric detail** — full OSI projection for one model (metrics, dimensions, source FQN, ODCS owner/domain), plus a "Request access" form whose POST is logged in-memory (Phase 4 will turn this into real REST provisioning).
+- **Chat** — wraps the Gemini MCP loop in-process. Every question becomes `list_models` → `list_metrics` → `list_dimensions` → `query_metric`, with the full tool trace visible in a collapsible details panel.
+
+Deploy as a Databricks App:
+```bash
+databricks apps deploy --source-code-path . --app-name git-ready-portal
+```
+See `portal/app.yaml` for the manifest and env-var configuration.
+
+### 12. (Stretch) Multi-vendor demo
 
 Swap any model in `examples/models/` for a Dremio- or Strategy-exported OSI YAML (with that vendor's `custom_extensions.<vendor>` block populated and the bridge's `query_metric` adapted) and re-run step 8. The agent answers identically. **OSI is the contract.**
 

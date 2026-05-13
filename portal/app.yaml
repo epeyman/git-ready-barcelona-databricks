@@ -1,0 +1,27 @@
+# Databricks Apps manifest for the GIT READY portal.
+# Deploy with:
+#   databricks apps deploy --source-code-path . --app-name git-ready-portal
+#
+# Configure these env vars on the app (Databricks UI → App → Configuration):
+#   PORTAL_STORE          file | sqlite | lakebase
+#   OSI_BRIDGE_PG_DSN     postgresql://... (when PORTAL_STORE=lakebase)
+#   DATABRICKS_HOST       https://<workspace>.cloud.databricks.com
+#   DATABRICKS_TOKEN      (auto-injected by the app runtime)
+#   DATABRICKS_HTTP_PATH  /sql/1.0/warehouses/<id>
+#   GEMINI_MODEL          databricks-gemini-2-5-flash
+
+command:
+  - "uvicorn"
+  - "portal.app:app"
+  - "--host"
+  - "0.0.0.0"
+  - "--port"
+  - "8000"
+
+env:
+  - name: PORTAL_STORE
+    value: file
+  - name: OSI_MODELS_DIR
+    value: examples/models
+  - name: GEMINI_MODEL
+    value: databricks-gemini-2-5-flash
