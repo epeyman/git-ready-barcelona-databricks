@@ -49,6 +49,7 @@ function Nav({ active }) {
           ${link("/", "Catalog")}
           ${link("/chat", "Chat")}
           ${link("/publish", "Publish")}
+          ${link("/approvals", "Approvals")}
           ${link("/requests", "My requests")}
         </nav>
       </div>
@@ -255,13 +256,16 @@ function Detail({ name }) {
   const [requestResult, setRequestResult] = useState(null);
   const [requester, setRequester] = useState("");
   const [reason, setReason] = useState("");
+  const [lineage, setLineage] = useState(null);
   const [error, setError] = useState(null);
 
   useEffect(() => {
     setModel(null);
     setRequestResult(null);
+    setLineage(null);
     setError(null);
     api(`/api/models/${encodeURIComponent(name)}`).then(setModel).catch((e) => setError(String(e)));
+    api(`/api/models/${encodeURIComponent(name)}/lineage`).then(setLineage).catch(() => {});
   }, [name]);
 
   if (error) {
@@ -351,6 +355,36 @@ function Detail({ name }) {
         )}
       </div>
 
+      <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 mt-8 mb-2">
+        Lineage
+        ${lineage ? html`<${Pill} tone=${lineage.mode === "live" ? "emerald" : "slate"}>${lineage.mode}<//>` : null}
+      </h2>
+      <div class="bg-white border border-slate-200 rounded-lg p-4 grid md:grid-cols-2 gap-4 text-sm">
+        <div>
+          <div class="text-slate-500 text-xs uppercase tracking-wider mb-1">Upstream</div>
+          ${!lineage ? html`<div class="text-slate-400">Loading…</div>` :
+            lineage.upstream?.length === 0 ? html`<div class="text-slate-400 text-xs">No upstream tables found.</div>` :
+            lineage.upstream.map((u) => html`<div class="font-mono text-xs py-0.5">${u.fqn}</div>`)}
+        </div>
+        <div>
+          <div class="text-slate-500 text-xs uppercase tracking-wider mb-1">Downstream</div>
+          ${!lineage ? html`<div class="text-slate-400">Loading…</div>` :
+            lineage.downstream?.length === 0 ? html`<div class="text-slate-400 text-xs">No downstream consumers found.</div>` :
+            lineage.downstream.map((d) => html`<div class="font-mono text-xs py-0.5">${d.fqn}</div>`)}
+        </div>
+        ${lineage && lineage.versions?.length ? html`
+          <div class="md:col-span-2">
+            <div class="text-slate-500 text-xs uppercase tracking-wider mb-1 mt-2">Contract revisions</div>
+            ${lineage.versions.map((v) => html`
+              <div class="text-xs flex items-center gap-2 py-0.5">
+                <${Pill} tone="slate">v${v.version}<//>
+                <span class="text-slate-500 font-mono">${v.created_at}</span>
+              </div>
+            `)}
+          </div>
+        ` : null}
+      </div>
+
       <h2 class="text-sm font-semibold uppercase tracking-wider text-slate-500 mt-8 mb-2">Request access</h2>
       <div class="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
         ${requestResult
@@ -360,23 +394,30 @@ function Detail({ name }) {
                   <span class="text-slate-900 font-medium">Request ${requestResult.id.slice(0, 8)}</span>
                   <${Pill} tone=${
                     requestResult.status === "granted" ? "emerald" :
+                    requestResult.status === "pending_approval" ? "amber" :
+                    requestResult.status === "rejected" ? "amber" :
                     requestResult.status === "failed" ? "amber" : "slate"
                   }>${requestResult.status}<//>
                 </div>
-                <div class="mt-3 space-y-2">
-                  ${(requestResult.grants || []).map(
-                    (g) => html`
-                      <div class="flex items-start gap-3 text-sm">
-                        <${Pill} tone=${
-                          g.status === "granted" ? "emerald" :
-                          g.status === "failed" ? "amber" :
-                          g.status === "dry-run" ? "indigo" : "slate"
-                        }>${g.engine} · ${g.status}<//>
-                        <span class="text-slate-600 font-mono text-xs">${g.detail}</span>
+                ${requestResult.status === "pending_approval"
+                  ? html`<div class="mt-2 text-sm text-amber-800">${requestResult.note}</div>`
+                  : html`
+                      <div class="mt-3 space-y-2">
+                        ${(requestResult.grants || []).map(
+                          (g) => html`
+                            <div class="flex items-start gap-3 text-sm">
+                              <${Pill} tone=${
+                                g.status === "granted" ? "emerald" :
+                                g.status === "failed" ? "amber" :
+                                g.status === "rejected" ? "amber" :
+                                g.status === "dry-run" ? "indigo" : "slate"
+                              }>${g.engine} · ${g.status}<//>
+                              <span class="text-slate-600 font-mono text-xs">${g.detail}</span>
+                            </div>
+                          `,
+                        )}
                       </div>
-                    `,
-                  )}
-                </div>
+                    `}
               </div>
             `
           : html`
@@ -584,6 +625,109 @@ function Requests() {
   `;
 }
 
+// -------- Approvals view --------
+
+function Approvals() {
+  // Owner identity comes from a ?as=email query in the hash for the demo;
+  // in production this is X-Forwarded-User from the Databricks Apps runtime.
+  const initial = useMemo(() => {
+    const m = window.location.hash.match(/[?&]as=([^&]+)/);
+    return m ? decodeURIComponent(m[1]) : localStorage.getItem("portal_as") || "";
+  }, []);
+  const [owner, setOwner] = useState(initial);
+  const [items, setItems] = useState([]);
+  const [approver, setApprover] = useState(initial);
+  const [reason, setReason] = useState("");
+  const [busyId, setBusyId] = useState(null);
+
+  const refresh = async (eml) => {
+    const target = eml ?? owner;
+    if (!target) {
+      setItems([]);
+      return;
+    }
+    const res = await api(`/api/access-requests?owner=${encodeURIComponent(target)}&status=pending_approval`);
+    setItems(res);
+  };
+
+  useEffect(() => {
+    refresh(initial);
+  }, [initial]);
+
+  const onSignIn = () => {
+    localStorage.setItem("portal_as", owner);
+    setApprover(owner);
+    refresh(owner);
+  };
+
+  const decide = async (id, verb) => {
+    if (!approver) return;
+    setBusyId(id);
+    try {
+      await api(`/api/access-requests/${encodeURIComponent(id)}/${verb}`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ approver, reason }),
+      });
+      await refresh();
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setBusyId(null);
+      setReason("");
+    }
+  };
+
+  return html`
+    <div class="max-w-4xl mx-auto px-6 py-8">
+      <h1 class="text-2xl font-semibold">Pending approvals</h1>
+      <p class="text-slate-600 mt-1 mb-4">
+        Requests on models you own. Approve to fire the provisioning fan-out; reject to record a denial with reason.
+      </p>
+
+      <div class="bg-white border border-slate-200 rounded p-4 mb-4 flex items-center gap-2">
+        <input value=${owner} onInput=${(e) => setOwner(e.target.value)}
+               placeholder="Sign in as owner email"
+               class="flex-1 px-3 py-2 rounded border border-slate-300" />
+        <button onClick=${onSignIn} class="px-3 py-2 rounded bg-indigo-600 text-white text-sm">Sign in</button>
+      </div>
+
+      ${!approver ? html`<div class="text-slate-500 text-sm">Sign in as a model owner to see pending requests.</div>` :
+        items.length === 0 ? html`<div class="text-slate-500 text-sm">No requests waiting for ${approver}.</div>` :
+        html`
+          <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100">
+            ${items.map(
+              (r) => html`
+                <div class="px-4 py-3">
+                  <div class="flex items-center justify-between">
+                    <div>
+                      <div class="font-medium">${r.model}</div>
+                      <div class="text-sm text-slate-500">requested by ${r.requester}</div>
+                    </div>
+                    <${Pill} tone="amber">${r.status}<//>
+                  </div>
+                  <div class="mt-3 flex flex-wrap items-center gap-2">
+                    <input value=${reason} onInput=${(e) => setReason(e.target.value)}
+                           placeholder="Reason (optional)"
+                           class="flex-1 px-3 py-1.5 rounded border border-slate-300 text-sm" />
+                    <button disabled=${busyId === r.id} onClick=${() => decide(r.id, "approve")}
+                            class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-700 disabled:bg-slate-300 text-white text-sm">
+                      ${busyId === r.id ? "…" : "Approve"}
+                    </button>
+                    <button disabled=${busyId === r.id} onClick=${() => decide(r.id, "reject")}
+                            class="px-3 py-1.5 rounded bg-slate-200 hover:bg-slate-300 disabled:bg-slate-100 text-slate-900 text-sm">
+                      Reject
+                    </button>
+                  </div>
+                </div>
+              `,
+            )}
+          </div>
+        `}
+    </div>
+  `;
+}
+
 // -------- Publish view (producer journey) --------
 
 function Publish() {
@@ -770,10 +914,11 @@ function Publish() {
 function App() {
   const hash = useHashRoute();
   const view = useMemo(() => {
-    if (hash.startsWith("/m/")) return { kind: "detail", name: decodeURIComponent(hash.slice(3)) };
-    if (hash === "/chat") return { kind: "chat" };
-    if (hash === "/publish") return { kind: "publish" };
-    if (hash === "/requests") return { kind: "requests" };
+    if (hash.startsWith("/m/")) return { kind: "detail", name: decodeURIComponent(hash.split("?")[0].slice(3)) };
+    if (hash.startsWith("/chat")) return { kind: "chat" };
+    if (hash.startsWith("/publish")) return { kind: "publish" };
+    if (hash.startsWith("/approvals")) return { kind: "approvals" };
+    if (hash.startsWith("/requests")) return { kind: "requests" };
     return { kind: "catalog" };
   }, [hash]);
 
@@ -781,6 +926,7 @@ function App() {
   if (view.kind === "detail") body = html`<${Detail} name=${view.name} />`;
   else if (view.kind === "chat") body = html`<${Chat} />`;
   else if (view.kind === "publish") body = html`<${Publish} />`;
+  else if (view.kind === "approvals") body = html`<${Approvals} />`;
   else if (view.kind === "requests") body = html`<${Requests} />`;
   else body = html`<${Catalog} />`;
 

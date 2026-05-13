@@ -209,16 +209,37 @@ class LakebaseModelStore:
             ],
         }
 
-    def list_access_requests(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_access_requests(
+        self,
+        *,
+        limit: int = 100,
+        owner: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        clauses = []
+        args: list[Any] = []
+        if status:
+            clauses.append("r.status = %s")
+            args.append(status)
+        if owner:
+            clauses.append(
+                "m.osi_payload #>> '{semantic_model,0,custom_extensions,odcs,owner}' = %s"
+            )
+            args.append(owner)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+        join_models = "LEFT JOIN osi_models m ON m.name = r.model" if owner else ""
+        args.append(limit)
         with self._conn() as c, c.cursor() as cur:
             cur.execute(
-                """
-                SELECT id, model, requester, status, created_at
-                FROM osi_access_requests
-                ORDER BY created_at DESC
+                f"""
+                SELECT r.id, r.model, r.requester, r.status, r.created_at
+                FROM osi_access_requests r
+                {join_models}
+                {where}
+                ORDER BY r.created_at DESC
                 LIMIT %s
                 """,
-                (limit,),
+                tuple(args),
             )
             return [
                 {

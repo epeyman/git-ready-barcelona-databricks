@@ -226,16 +226,47 @@ class SqliteModelStore:
             ],
         }
 
-    def list_access_requests(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_access_requests(
+        self,
+        *,
+        limit: int = 100,
+        owner: str | None = None,
+        status: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """List access requests, newest first.
+
+        `owner` filters to requests on models whose ODCS owner matches.
+        Owner is denormalised in osi_models via the json payload, so the
+        filter joins on osi_models and pulls the owner out of the JSON.
+        """
+        clauses = []
+        args: list[Any] = []
+        if status:
+            clauses.append("r.status = ?")
+            args.append(status)
+        if owner:
+            # SQLite json_extract path: $.semantic_model[0].custom_extensions.odcs.owner
+            clauses.append(
+                "json_extract(m.osi_payload, '$.semantic_model[0].custom_extensions.odcs.owner') = ?"
+            )
+            args.append(owner)
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
+
+        join_models = (
+            "LEFT JOIN osi_models m ON m.name = r.model" if owner else ""
+        )
+        args.append(limit)
         with self._conn() as c:
             rows = c.execute(
-                """
-                SELECT id, model, requester, status, created_at
-                FROM osi_access_requests
-                ORDER BY created_at DESC
+                f"""
+                SELECT r.id, r.model, r.requester, r.status, r.created_at
+                FROM osi_access_requests r
+                {join_models}
+                {where}
+                ORDER BY r.created_at DESC
                 LIMIT ?
                 """,
-                (limit,),
+                tuple(args),
             ).fetchall()
         return [
             {

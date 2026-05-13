@@ -33,6 +33,7 @@ The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MC
 | `osi_bridge/translators/` | Per-vendor adapter package: `databricks.py`, `dremio.py`, `strategy.py`, dispatcher in `__init__.py` |
 | `osi_bridge/provisioning/` | REST-based access provisioning across the same engines, with audit-log persistence in the store |
 | `osi_bridge/producer/` | Bottom-up producer journey — schema inspection, AI contract drafting, GitHub publishing |
+| `osi_bridge/lineage.py` | Lineage view backed by `system.access.table_lineage` + the model store's version history |
 | `osi_bridge/search.py` | Metric search ranker + Gemini-backed AI fallback |
 | `portal/app.py` | FastAPI portal (catalog, search, chat, access requests) |
 | `portal/chat.py` | In-process Gemini MCP-loop chat handler |
@@ -262,7 +263,31 @@ curl -sX POST http://localhost:8000/api/producer/infer \
   -d '{"fqn":"main.retail.checkouts","domain":"retail","owner":"retail@schwarz.com","dry_run":true}' | jq .metrics_summary
 ```
 
-### 15. (Stretch) Bring your own vendor
+### 15. Lineage + owner-approval gating (Phase 6)
+
+Every model detail page now carries a **Lineage** section. Upstream and downstream tables come from a live query against `system.access.table_lineage` when the SQL warehouse is reachable; otherwise a synthetic projection (the FQN's `_raw` upstream and a couple of plausible downstream consumers) renders so the demo still tells the story. The contract version log on the same panel comes from `osi_model_versions` — every ingestion is one row.
+
+```bash
+curl -s http://localhost:8000/api/models/lidlplus_transactions_mv/lineage | jq
+```
+
+Access requests on any model that declares an ODCS owner (in `custom_extensions.odcs.owner`) now start in `pending_approval` instead of firing the engine fan-out immediately. The new **Approvals** page in the portal lets a model owner "sign in as" themselves, see the queue filtered to their models, and approve or reject:
+
+```bash
+# Approve a pending request and let the bridge fire grant_all.
+curl -sX POST http://localhost:8000/api/access-requests/<id>/approve \
+  -H 'content-type: application/json' \
+  -d '{"approver":"lidlplus.platform@schwarz.com","reason":"standard tier"}' | jq
+
+# Or reject with a reason — audit trail captures both.
+curl -sX POST http://localhost:8000/api/access-requests/<id>/reject \
+  -H 'content-type: application/json' \
+  -d '{"approver":"lidlplus.platform@schwarz.com","reason":"duplicate"}'
+```
+
+Pass `"auto_approve": true` in the original request POST to bypass approval for self-service tiers. Models without an `odcs.owner` (the multi-vendor fixture, for example) skip approval and go straight to the fan-out exactly as Phase 4 did.
+
+### 16. (Stretch) Bring your own vendor
 
 Drop a `osi_bridge/translators/<vendor>.py` implementing `build_query` + `execute` + `ENGINE_NAME`, add it to the priority tuple in `osi_bridge/translators/__init__.py`, and any OSI model with a `custom_extensions.<vendor>` block becomes addressable. For provisioning, add a matching `osi_bridge/provisioning/<vendor>.py` exposing `grant()` and register it in `osi_bridge/provisioning/service.py`.
 

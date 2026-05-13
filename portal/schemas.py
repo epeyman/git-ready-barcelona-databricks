@@ -83,6 +83,7 @@ class AccessRequest(BaseModel):
     requester: str
     business_justification: str = ""
     dry_run: bool = False
+    auto_approve: bool = False
 
 
 class GrantEntry(BaseModel):
@@ -151,3 +152,29 @@ class PublishResponse(BaseModel):
     files: list[PublishFileResult] = Field(default_factory=list)
     persisted_to_store: bool = False
     commit_message: str = ""
+
+
+# --- Lineage ---
+
+
+class LineageEdge(BaseModel):
+    fqn: str
+    last_seen: str | None = None
+
+
+class LineageResponse(BaseModel):
+    model: str
+    fqn: str | None = None
+    source: str | None = None
+    mode: str  # 'live' | 'synthetic'
+    upstream: list[LineageEdge] = Field(default_factory=list)
+    downstream: list[LineageEdge] = Field(default_factory=list)
+    versions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+# --- Approval workflow ---
+
+
+class ApprovalAction(BaseModel):
+    approver: str
+    reason: str = ""

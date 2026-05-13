@@ -20,6 +20,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from osi_bridge import tools, translators
+from osi_bridge.lineage import get_lineage
 from osi_bridge.producer import infer as producer_infer
 from osi_bridge.producer import publish as producer_publish
 from osi_bridge.provisioning import grant_all, rollup_status
@@ -31,6 +32,7 @@ from portal.schemas import (
     AccessRequest,
     AccessRequestListEntry,
     AccessRequestResponse,
+    ApprovalAction,
     ChatRequest,
     ChatResponse,
     DimensionSummary,
@@ -39,6 +41,7 @@ from portal.schemas import (
     GrantEntry,
     InferRequest,
     InferResponse,
+    LineageResponse,
     MetricSummary,
     ModelSummary,
     PublishFileResult,
@@ -151,26 +154,18 @@ def post_chat(req: ChatRequest) -> ChatResponse:
         raise HTTPException(status_code=400, detail=str(e))
 
 
-@app.post("/api/access-requests", response_model=AccessRequestResponse)
-def post_access_request(req: AccessRequest) -> AccessRequestResponse:
-    try:
-        osi = REGISTRY.get(req.model)
-    except KeyError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+def _model_owner(osi: dict[str, Any]) -> str | None:
+    return ((osi["semantic_model"][0].get("custom_extensions") or {}).get("odcs") or {}).get("owner")
 
-    request_id = str(uuid.uuid4())
-    results = grant_all(osi, req.requester, req.business_justification, dry_run=req.dry_run)
-    grants = [r.as_dict() for r in results]
-    status = rollup_status(results)
-    note = "; ".join(
-        f"{g['engine']}: {g['status']}"
-        for g in grants
-    )
 
+def _persist_request(
+    request_id: str, req: AccessRequest, status: str, grants: list[dict[str, Any]]
+) -> None:
     if _STORE is not None:
         _STORE.save_access_request(request_id, req.model, req.requester, req.business_justification)
-        _STORE.record_grants(request_id, grants)
         _STORE.update_access_status(request_id, status)
+        if grants:
+            _STORE.record_grants(request_id, grants)
     else:
         _INMEM_REQUESTS.append({
             "id": request_id,
@@ -182,11 +177,33 @@ def post_access_request(req: AccessRequest) -> AccessRequestResponse:
             "created_at": datetime.utcnow().isoformat() + "Z",
         })
 
+
+@app.post("/api/access-requests", response_model=AccessRequestResponse)
+def post_access_request(req: AccessRequest) -> AccessRequestResponse:
+    try:
+        osi = REGISTRY.get(req.model)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    request_id = str(uuid.uuid4())
+    owner = _model_owner(osi)
+    requires_approval = owner is not None and not req.auto_approve
+
+    if requires_approval:
+        status = "pending_approval"
+        grants: list[dict[str, Any]] = []
+        note = f"Pending approval by {owner}."
+    else:
+        results = grant_all(osi, req.requester, req.business_justification, dry_run=req.dry_run)
+        grants = [r.as_dict() for r in results]
+        status = rollup_status(results)
+        note = "; ".join(f"{g['engine']}: {g['status']}" for g in grants)
+
+    _persist_request(request_id, req, status, grants)
     print(
         f"[Portal] access-request {request_id} {req.model} by {req.requester} "
         f"→ {status}: {note}"
     )
-
     return AccessRequestResponse(
         id=request_id,
         model=req.model,
@@ -197,20 +214,101 @@ def post_access_request(req: AccessRequest) -> AccessRequestResponse:
     )
 
 
-@app.get("/api/access-requests", response_model=list[AccessRequestListEntry])
-def list_access_requests() -> list[AccessRequestListEntry]:
+@app.post("/api/access-requests/{request_id}/approve", response_model=AccessRequestResponse)
+def approve_access_request(request_id: str, action: ApprovalAction) -> AccessRequestResponse:
+    if _STORE is None:
+        entry = next((r for r in _INMEM_REQUESTS if r["id"] == request_id), None)
+    else:
+        entry = _STORE.get_access_request(request_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown request '{request_id}'")
+    if entry["status"] != "pending_approval":
+        raise HTTPException(status_code=409, detail=f"Request is {entry['status']}, not pending_approval.")
+
+    try:
+        osi = REGISTRY.get(entry["model"])
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    results = grant_all(osi, entry["requester"], entry.get("justification", ""), dry_run=False)
+    grants = [r.as_dict() for r in results]
+    # Stamp the approver into the audit log via a synthetic "approval" row.
+    grants.insert(0, {"engine": "approval", "status": "granted", "detail": f"Approved by {action.approver}: {action.reason or 'no reason given'}"})
+    status = rollup_status(results)
+
     if _STORE is not None:
-        return [AccessRequestListEntry(**r) for r in _STORE.list_access_requests()]
-    # In-memory fallback ordered newest first.
+        _STORE.record_grants(request_id, grants)
+        _STORE.update_access_status(request_id, status)
+    else:
+        entry["status"] = status
+        entry["grants"] = (entry.get("grants") or []) + grants
+
+    note = "; ".join(f"{g['engine']}: {g['status']}" for g in grants)
+    print(f"[Portal] approve {request_id} by {action.approver} → {status}: {note}")
+    return AccessRequestResponse(
+        id=request_id,
+        model=entry["model"],
+        requester=entry["requester"],
+        status=status,
+        note=note,
+        grants=[GrantEntry(**g) for g in grants],
+    )
+
+
+@app.post("/api/access-requests/{request_id}/reject", response_model=AccessRequestResponse)
+def reject_access_request(request_id: str, action: ApprovalAction) -> AccessRequestResponse:
+    if _STORE is None:
+        entry = next((r for r in _INMEM_REQUESTS if r["id"] == request_id), None)
+    else:
+        entry = _STORE.get_access_request(request_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"Unknown request '{request_id}'")
+    if entry["status"] != "pending_approval":
+        raise HTTPException(status_code=409, detail=f"Request is {entry['status']}, not pending_approval.")
+
+    rejection_row = {
+        "engine": "approval",
+        "status": "rejected",
+        "detail": f"Rejected by {action.approver}: {action.reason or 'no reason given'}",
+    }
+    if _STORE is not None:
+        _STORE.record_grants(request_id, [rejection_row])
+        _STORE.update_access_status(request_id, "rejected")
+    else:
+        entry["status"] = "rejected"
+        entry["grants"] = (entry.get("grants") or []) + [rejection_row]
+
+    return AccessRequestResponse(
+        id=request_id,
+        model=entry["model"],
+        requester=entry["requester"],
+        status="rejected",
+        note=rejection_row["detail"],
+        grants=[GrantEntry(**rejection_row)],
+    )
+
+
+@app.get("/api/access-requests", response_model=list[AccessRequestListEntry])
+def list_access_requests(
+    owner: str | None = None, status: str | None = None
+) -> list[AccessRequestListEntry]:
+    if _STORE is not None:
+        return [
+            AccessRequestListEntry(**r)
+            for r in _STORE.list_access_requests(owner=owner, status=status)
+        ]
+    # In-memory fallback: filter by owner via the registry, by status directly.
+    rows = list(reversed(_INMEM_REQUESTS))
+    if status:
+        rows = [r for r in rows if r["status"] == status]
+    if owner:
+        rows = [r for r in rows if _model_owner(REGISTRY.get(r["model"])) == owner]
     return [
         AccessRequestListEntry(
-            id=r["id"],
-            model=r["model"],
-            requester=r["requester"],
-            status=r["status"],
-            created_at=r["created_at"],
+            id=r["id"], model=r["model"], requester=r["requester"],
+            status=r["status"], created_at=r["created_at"],
         )
-        for r in reversed(_INMEM_REQUESTS)
+        for r in rows
     ]
 
 
@@ -239,6 +337,22 @@ def get_access_request(request_id: str) -> AccessRequestResponse:
                 grants=[GrantEntry(**g) for g in r["grants"]],
             )
     raise HTTPException(status_code=404, detail=f"Unknown request '{request_id}'")
+
+
+@app.get("/api/models/{name}/lineage", response_model=LineageResponse)
+def get_model_lineage(name: str) -> LineageResponse:
+    try:
+        store_target = _STORE if _STORE is not None else _file_store_facade()
+        return LineageResponse(**get_lineage(store_target, name))
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+
+def _file_store_facade() -> Any:
+    """When the portal is in file-store mode the registry-attached object IS
+    the store; lineage just needs a `.get(name)` and an optional `.history`.
+    """
+    return REGISTRY._store  # noqa: SLF001  intentional access for facade
 
 
 @app.post("/api/producer/infer", response_model=InferResponse)
