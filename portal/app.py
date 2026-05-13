@@ -17,7 +17,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from osi_bridge import tools
+from osi_bridge import tools, translators
 from osi_bridge.registry import Registry
 from osi_bridge.search import ai_fallback, search_metrics
 
@@ -80,6 +80,7 @@ def get_model(name: str) -> dict[str, Any]:
     except KeyError as e:
         raise HTTPException(status_code=404, detail=str(e))
     sm = osi["semantic_model"][0]
+    engines = translators.available_engines(osi) or ["databricks"]
     return {
         "name": name,
         "description": sm.get("description"),
@@ -90,6 +91,8 @@ def get_model(name: str) -> dict[str, Any]:
         "fqn": (sm.get("custom_extensions") or {}).get("databricks", {}).get("metric_view_fqn"),
         "odcs": (sm.get("custom_extensions") or {}).get("odcs", {}),
         "confluence": (sm.get("custom_extensions") or {}).get("confluence", {}),
+        "engines": engines,
+        "default_engine": engines[0],
     }
 
 

@@ -16,22 +16,21 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from databricks import sql
-
+from osi_bridge import translators
 from osi_bridge.registry import Registry
-from osi_bridge.translator import build_sql
+from osi_bridge.translators._common import RenderedQuery
 
 
 def run_sql(sql_text: str) -> list[dict[str, Any]]:
-    """Execute SQL against the Databricks warehouse identified by env vars."""
-    host = os.environ["DATABRICKS_HOST"].replace("https://", "")
-    http_path = os.environ["DATABRICKS_HTTP_PATH"]
-    token = os.environ["DATABRICKS_TOKEN"]
-    with sql.connect(server_hostname=host, http_path=http_path, access_token=token) as c:
-        with c.cursor() as cur:
-            cur.execute(sql_text)
-            cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, r)) for r in cur.fetchall()]
+    """Phase-0 escape hatch — execute raw SQL against the Databricks warehouse.
+
+    Kept for ad-hoc tooling; the canonical query path is now
+    `osi_bridge.translators.build_and_execute`, which routes per the OSI
+    model's `custom_extensions`.
+    """
+    from osi_bridge.translators.databricks import execute as _execute
+
+    return _execute(RenderedQuery(engine="databricks", kind="sql", payload=sql_text))
 
 
 def list_models(registry: Registry) -> list[dict[str, Any]]:
@@ -39,6 +38,7 @@ def list_models(registry: Registry) -> list[dict[str, Any]]:
     out = []
     for name, m in registry.items():
         sm = m["semantic_model"][0]
+        engines = translators.available_engines(m) or ["databricks"]
         out.append({
             "name": name,
             "description": sm.get("description"),
@@ -47,6 +47,8 @@ def list_models(registry: Registry) -> list[dict[str, Any]]:
             "dimension_count": sum(len(ds.get("fields", [])) for ds in sm.get("datasets", [])),
             "owner": (sm.get("custom_extensions") or {}).get("odcs", {}).get("owner"),
             "domain": (sm.get("custom_extensions") or {}).get("odcs", {}).get("domain"),
+            "engines": engines,
+            "default_engine": engines[0],
         })
     return out
 
@@ -95,16 +97,46 @@ def query_metric(
     filters: list[dict[str, Any]] | None = None,
     time_grain: str | None = None,
     limit: int = 1000,
+    *,
+    engine: str | None = None,
 ) -> dict[str, Any]:
-    """Translate an OSI metric request to SQL and run it. Returns SQL + rows."""
+    """Translate an OSI metric request and run it on the selected engine.
+
+    The engine is picked from the OSI model's `custom_extensions` blocks —
+    `databricks` first, then `dremio`, then `strategy`. Pass `engine=...` to
+    force one. The response always carries the engine that ran, the rendered
+    query (SQL string or REST body), and `executable` metadata so the portal
+    can tell the user whether the query was actually run or just rendered.
+    """
     osi = registry.get(model)
-    sql_text = build_sql(
+    rendered = translators.build_query(
         osi_model=osi,
         metrics=[metric],
         dimensions=dimensions or [],
         filters=filters or [],
         time_grain=time_grain,
         limit=limit,
+        engine=engine,
     )
-    rows = run_sql(sql_text)
-    return {"model": model, "sql": sql_text, "rows": rows, "row_count": len(rows)}
+    executable = rendered.metadata.get("executable", True)
+    response: dict[str, Any] = {
+        "model": model,
+        "engine": rendered.engine,
+        "kind": rendered.kind,
+        "fqn": rendered.fqn,
+        rendered.kind: rendered.payload,  # 'sql' or 'rest' key on the response
+        "executable": executable,
+    }
+    if not executable:
+        response["rows"] = []
+        response["row_count"] = 0
+        response["note"] = (
+            f"Adapter '{rendered.engine}' has no credentials configured "
+            "(set the engine's env vars). Returning the rendered query only."
+        )
+        return response
+
+    rows = translators.execute(rendered)
+    response["rows"] = rows
+    response["row_count"] = len(rows)
+    return response

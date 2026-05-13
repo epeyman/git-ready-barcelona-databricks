@@ -158,6 +158,11 @@ function Catalog() {
                         <span>·</span>
                         <span class="font-mono">${m.source || "—"}</span>
                       </div>
+                      <div class="mt-2 flex flex-wrap items-center gap-1">
+                        ${(m.engines || []).map(
+                          (eng) => html`<${Pill} tone=${eng === m.default_engine ? "indigo" : "slate"}>${eng}<//>`,
+                        )}
+                      </div>
                     </a>
                   `,
                 )}
@@ -284,10 +289,13 @@ function Detail({ name }) {
   return html`
     <div class="max-w-6xl mx-auto px-6 py-8">
       <a href="#/" class="text-sm text-indigo-600 hover:underline">← Catalog</a>
-      <div class="mt-2 flex items-center gap-3">
+      <div class="mt-2 flex flex-wrap items-center gap-2">
         <h1 class="text-2xl font-semibold">${model.name}</h1>
         ${model.odcs?.domain ? html`<${Pill} tone="emerald">${model.odcs.domain}<//>` : null}
         ${model.odcs?.data_product ? html`<${Pill} tone="indigo">${model.odcs.data_product}<//>` : null}
+        ${(model.engines || []).map(
+          (eng) => html`<${Pill} tone=${eng === model.default_engine ? "indigo" : "slate"}>${eng}<//>`,
+        )}
       </div>
       <p class="text-slate-600 mt-1">${model.description}</p>
 

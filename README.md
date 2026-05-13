@@ -29,7 +29,8 @@ The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MC
 | `osi_bridge/tools.py` | Plain-Python implementations of the four bridge tools |
 | `osi_bridge/registry.py` | Delegates to a pluggable `ModelStore` (file / sqlite / lakebase) |
 | `osi_bridge/exporter.py` | Standalone Databricks Metric View → OSI YAML converter |
-| `osi_bridge/translator.py` | OSI metric request → Databricks SQL with `MEASURE()` |
+| `osi_bridge/translator.py` | Phase 0 import path — re-exports the Databricks adapter's `build_sql` |
+| `osi_bridge/translators/` | Per-vendor adapter package: `databricks.py`, `dremio.py`, `strategy.py`, dispatcher in `__init__.py` |
 | `osi_bridge/search.py` | Metric search ranker + Gemini-backed AI fallback |
 | `portal/app.py` | FastAPI portal (catalog, search, chat, access requests) |
 | `portal/chat.py` | In-process Gemini MCP-loop chat handler |
@@ -202,9 +203,31 @@ databricks apps deploy --source-code-path . --app-name git-ready-portal
 ```
 See `portal/app.yaml` for the manifest and env-var configuration.
 
-### 12. (Stretch) Multi-vendor demo
+### 12. Multi-vendor execution (Phase 3)
 
-Swap any model in `examples/models/` for a Dremio- or Strategy-exported OSI YAML (with that vendor's `custom_extensions.<vendor>` block populated and the bridge's `query_metric` adapted) and re-run step 8. The agent answers identically. **OSI is the contract.**
+The bridge has three vendor adapters: `databricks`, `dremio`, `strategy`. Each one renders an OSI metric request into the format the engine wants (SQL with `MEASURE()` for Databricks, inlined-expression SQL for Dremio, REST body for Strategy Mosaic) and can execute it when the right credentials are present.
+
+`examples/models/orders_multivendor.osi.yaml` declares all three engines on the same OSI contract. Try the dispatcher:
+
+```bash
+python -c "
+from osi_bridge.registry import Registry
+from osi_bridge import translators
+r = Registry.from_path('examples/models')
+osi = r.get('orders_multivendor_mv')
+for eng in ['databricks','dremio','strategy']:
+    q = translators.build_query(osi, ['total_revenue'], ['order_priority'], engine=eng)
+    print(eng, '->', q.kind, q.payload if isinstance(q.payload,str) else list(q.payload.keys()))
+"
+```
+
+From the chat / `query_metric` tool, pass `engine="dremio"` (or `"strategy"`) to force the adapter. When the engine has no credentials configured, the response includes the rendered query and `executable: false` so the portal can still demo the contract — same OSI, three engines, one tool call.
+
+Set `DREMIO_BASE_URL` / `DREMIO_TOKEN` and `STRATEGY_BASE_URL` / `STRATEGY_TOKEN` (see `.env.example`) to enable actual execution.
+
+### 13. (Stretch) Bring your own vendor
+
+Drop a `osi_bridge/translators/<vendor>.py` implementing `build_query` + `execute` + `ENGINE_NAME`, add it to the priority tuple in `osi_bridge/translators/__init__.py`, and any OSI model with a `custom_extensions.<vendor>` block becomes addressable.
 
 ## Architecture and demo script
 

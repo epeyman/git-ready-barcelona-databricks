@@ -20,6 +20,8 @@ class ModelSummary(BaseModel):
     dimension_count: int
     owner: str | None = None
     domain: str | None = None
+    engines: list[str] = Field(default_factory=list)
+    default_engine: str | None = None
 
 
 class MetricSummary(BaseModel):

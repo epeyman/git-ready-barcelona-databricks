@@ -1,0 +1,104 @@
+# orders_multivendor — same TPC-H orders OSI, but declares custom_extensions
+# for three engines simultaneously. The dispatcher uses Databricks by default
+# (first in priority order) and `query_metric(..., engine='dremio'|'strategy')`
+# routes to the other two. This is the OSI-is-the-contract demo.
+version: '1.0'
+semantic_model:
+- name: orders_multivendor_mv
+  description: TPC-H orders contract addressable on three engines simultaneously.
+  ai_context:
+    instructions: Use these metrics for any quantitative question about orders or
+      revenue. The same semantic contract is served by Databricks (default),
+      Dremio, or Strategy Mosaic — pick via the engine argument.
+  datasets:
+  - name: orders_multivendor_mv
+    source: samples.tpch.orders
+    fields:
+    - name: order_priority
+      description: TPC-H order priority — 1-URGENT through 5-LOW
+      expression:
+      - dialect: Databricks
+        sql: o_orderpriority
+      - dialect: Dremio
+        sql: o_orderpriority
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [priority, urgency]
+        display_name: Order Priority
+    - name: order_status
+      description: O = open, F = fulfilled, P = in-progress
+      expression:
+      - dialect: Databricks
+        sql: o_orderstatus
+      - dialect: Dremio
+        sql: o_orderstatus
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [status, state]
+        display_name: Order Status
+    - name: order_date
+      description: Date the order was placed
+      expression:
+      - dialect: Databricks
+        sql: o_orderdate
+      - dialect: Dremio
+        sql: o_orderdate
+      dimension:
+        is_time: true
+      ai_context:
+        synonyms: [date, when, period]
+        display_name: Order Date
+  metrics:
+  - name: total_revenue
+    description: Sum of order totals across all orders
+    expression:
+    - dialect: Databricks
+      sql: SUM(o_totalprice)
+    - dialect: Dremio
+      sql: SUM(o_totalprice)
+    ai_context:
+      synonyms: [revenue, sales, gmv, top line]
+      display_name: Total Revenue
+  - name: order_count
+    description: Distinct count of orders
+    expression:
+    - dialect: Databricks
+      sql: COUNT(*)
+    - dialect: Dremio
+      sql: COUNT(*)
+    ai_context:
+      synonyms: [orders, number of orders, volume]
+      display_name: Order Count
+  - name: avg_order_value
+    description: Mean of o_totalprice across orders
+    expression:
+    - dialect: Databricks
+      sql: AVG(o_totalprice)
+    - dialect: Dremio
+      sql: AVG(o_totalprice)
+    ai_context:
+      synonyms: [aov, average sale, basket size]
+      display_name: Average Order Value
+  custom_extensions:
+    databricks:
+      metric_view_fqn: <catalog>.osi_demo.orders_multivendor_mv
+      query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
+        GROUP BY <dims>
+    dremio:
+      table: prod.sales.orders
+      query_pattern: SELECT <metric_expressions>, <dims> FROM <table> WHERE <filters>
+        GROUP BY <dims>
+    strategy:
+      metric_set_id: orders_mosaic
+      # Optional name -> Mosaic object ID maps. The adapter falls back to the
+      # OSI name when no override is present.
+      metric_id_map:
+        total_revenue: "MET-1001"
+        order_count:   "MET-1002"
+        avg_order_value: "MET-1003"
+      attribute_id_map:
+        order_priority: "ATT-201"
+        order_status:   "ATT-202"
+        order_date:     "ATT-203"
