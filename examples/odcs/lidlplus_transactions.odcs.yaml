@@ -1,0 +1,91 @@
+apiVersion: v3.0.0
+kind: DataContract
+id: lidlplus-transactions-v1
+status: active
+name: lidlplus Loyalty Transactions
+version: 1.0.0
+domain: retail
+dataProduct: lidlplus
+
+description:
+  purpose: Basket-level lidlplus loyalty transactions across the European fleet.
+  usage: Revenue analysis, loyalty engagement, store-level performance.
+  limitations: Synthetic data inside the GIT READY hackathon — the real
+    contract lives under domain=retail in the production catalog and points
+    at lidlplus.gold.transactions.
+
+servers:
+  - server: production
+    type: databricks
+    catalog: main
+    schema: osi_demo
+    path: lidlplus_transactions
+
+schema:
+  - name: lidlplus_transactions
+    physicalName: lidlplus_transactions_mv
+    description: lidlplus loyalty transactions semantic projection
+    properties:
+      - name: country
+        logicalType: string
+        physicalType: STRING
+        description: Country code (DE, FR, ES, PL, IT)
+        customProperties:
+          - property: display_name
+            value: Country
+          - property: ai_synonyms
+            value: [market, country code, geo]
+      - name: store_id
+        logicalType: string
+        physicalType: STRING
+        description: Store identifier
+        customProperties:
+          - property: display_name
+            value: Store ID
+          - property: ai_synonyms
+            value: [store, shop, branch]
+      - name: loyalty_tier
+        logicalType: string
+        physicalType: STRING
+        description: Loyalty tier (none, bronze, silver, gold)
+        customProperties:
+          - property: display_name
+            value: Loyalty Tier
+          - property: ai_synonyms
+            value: [tier, loyalty level, membership]
+      - name: payment_method
+        logicalType: string
+        physicalType: STRING
+        description: Payment method (cash, card, lidlpay)
+        customProperties:
+          - property: display_name
+            value: Payment Method
+          - property: ai_synonyms
+            value: [payment, tender]
+      - name: transaction_date
+        logicalType: date
+        physicalType: DATE
+        description: Date of the transaction
+        customProperties:
+          - property: display_name
+            value: Transaction Date
+          - property: ai_synonyms
+            value: [date, day, when]
+
+quality:
+  - rule: not_null
+    column: store_id
+  - rule: not_null
+    column: country
+  - rule: not_null
+    column: transaction_date
+
+team:
+  - role: owner
+    username: lidlplus.platform@schwarz.com
+  - role: steward
+    username: loyalty.analytics@schwarz.com
+
+support:
+  - channel: "#lidlplus-data"
+    tool: slack

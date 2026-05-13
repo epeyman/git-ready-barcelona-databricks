@@ -6,3 +6,5 @@ fastmcp>=0.4.0
 openai>=1.40.0
 python-dotenv>=1.0.0
 pydantic>=2.6.0
+# Optional — only required for the Lakebase / Postgres model store.
+psycopg[binary]>=3.1; extra != "no-pg"

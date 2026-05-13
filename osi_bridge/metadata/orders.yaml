@@ -5,6 +5,11 @@
 # columns/measures only support `name`, `expr`, `window`. Richer annotations live
 # here and are merged by osi_bridge/exporter.py when producing OSI v1.0 YAML.
 
+description: Sales orders semantic model — OSI demo
+ai_instructions: >-
+  Semantic model exported from a Databricks Metric View on TPC-H orders.
+  Use the metrics here for any quantitative question about orders or revenue.
+
 dimensions:
   order_priority:
     display_name: Order Priority

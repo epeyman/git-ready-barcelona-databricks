@@ -1,0 +1,110 @@
+# lidlplus transactions (synthetic) — OSI v1.0 stub. Regenerate by running
+#   notebooks/12_lidlplus_metric_view.py    (seeds a small synthetic table + Metric View)
+# and then
+#   python -m osi_bridge.exporter \
+#     --fqn "$OSI_CATALOG.$OSI_SCHEMA.lidlplus_transactions_mv" \
+#     --out examples/models/lidlplus_transactions.osi.yaml \
+#     --metadata osi_bridge/metadata/lidlplus_transactions.yaml
+#
+# The notebook generates ~5000 mock rows so SAs can demo the portal end-to-end
+# without needing access to real lidlplus data. Replace the source with the
+# real customer table once available; the OSI contract stays identical.
+version: '1.0'
+semantic_model:
+- name: lidlplus_transactions_mv
+  description: lidlplus loyalty transactions semantic model — synthetic demo data
+  ai_context:
+    instructions: Use these metrics for any quantitative question about lidlplus
+      basket transactions, loyalty engagement, or store-level performance.
+  datasets:
+  - name: lidlplus_transactions_mv
+    source: <catalog>.osi_demo.lidlplus_transactions
+    fields:
+    - name: country
+      description: Country code (DE, FR, ES, PL, IT)
+      expression:
+      - dialect: Databricks
+        sql: country
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [market, country code, geo]
+        display_name: Country
+    - name: store_id
+      description: Store identifier
+      expression:
+      - dialect: Databricks
+        sql: store_id
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [store, shop, branch]
+        display_name: Store ID
+    - name: loyalty_tier
+      description: Loyalty tier (none, bronze, silver, gold)
+      expression:
+      - dialect: Databricks
+        sql: loyalty_tier
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [tier, loyalty level, membership]
+        display_name: Loyalty Tier
+    - name: payment_method
+      description: Payment method (cash, card, lidlpay)
+      expression:
+      - dialect: Databricks
+        sql: payment_method
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [payment, tender]
+        display_name: Payment Method
+    - name: transaction_date
+      description: Date of the transaction
+      expression:
+      - dialect: Databricks
+        sql: transaction_date
+      dimension:
+        is_time: true
+      ai_context:
+        synonyms: [date, day, when]
+        display_name: Transaction Date
+  metrics:
+  - name: total_revenue
+    description: Sum of total_amount across transactions
+    expression:
+    - dialect: Databricks
+      sql: SUM(total_amount)
+    ai_context:
+      synonyms: [revenue, sales, gmv, top line]
+      display_name: Total Revenue
+  - name: transaction_count
+    description: Number of transactions
+    expression:
+    - dialect: Databricks
+      sql: COUNT(*)
+    ai_context:
+      synonyms: [transactions, baskets, tickets]
+      display_name: Transaction Count
+  - name: avg_basket
+    description: Mean of total_amount across transactions
+    expression:
+    - dialect: Databricks
+      sql: AVG(total_amount)
+    ai_context:
+      synonyms: [average basket, basket size, aov]
+      display_name: Average Basket
+  - name: unique_customers
+    description: Distinct customers transacting in the period
+    expression:
+    - dialect: Databricks
+      sql: COUNT(DISTINCT customer_id)
+    ai_context:
+      synonyms: [distinct customers, unique shoppers]
+      display_name: Unique Customers
+  custom_extensions:
+    databricks:
+      metric_view_fqn: <catalog>.osi_demo.lidlplus_transactions_mv
+      query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
+        GROUP BY <dims>

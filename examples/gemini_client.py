@@ -65,10 +65,13 @@ async def ask(question: str) -> None:
                 {
                     "role": "system",
                     "content": (
-                        "You are a data analyst. Use the OSI Bridge tools to answer "
-                        "any quantitative question. Always call list_metrics first if "
-                        "you are unsure which metric to use. After receiving query "
-                        "results, summarise them in plain English with concrete numbers."
+                        "You are a data analyst. The OSI Bridge serves several "
+                        "semantic models — call list_models first to see them, "
+                        "then list_metrics (optionally filtered by model) to find "
+                        "the right metric, list_dimensions(model=...) for slicing "
+                        "options, and finally query_metric(model=..., metric=...) "
+                        "to fetch numbers. After receiving query results, "
+                        "summarise them in plain English with concrete numbers."
                     ),
                 },
                 {"role": "user", "content": question},

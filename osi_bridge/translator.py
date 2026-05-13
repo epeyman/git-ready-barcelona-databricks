@@ -4,6 +4,14 @@ from __future__ import annotations
 from typing import Any
 
 
+def _time_column(sm: dict[str, Any]) -> str | None:
+    """Return the first dimension flagged `dimension.is_time: true`, or None."""
+    for f in sm["datasets"][0]["fields"]:
+        if (f.get("dimension") or {}).get("is_time"):
+            return f["name"]
+    return None
+
+
 def build_sql(
     osi_model: dict[str, Any],
     metrics: list[str],
@@ -26,11 +34,18 @@ def build_sql(
             raise ValueError(f"Unknown dimension '{d}'. Valid: {sorted(valid_dims)}")
 
     select_parts = [f"MEASURE({m}) AS {m}" for m in metrics]
-
     group_dims: list[str] = []
-    if time_grain and "order_date" in valid_dims:
-        select_parts.append(f"DATE_TRUNC('{time_grain}', order_date) AS time_bucket")
+
+    if time_grain:
+        time_col = _time_column(sm)
+        if time_col is None:
+            raise ValueError(
+                f"time_grain='{time_grain}' requested but no dimension has "
+                "`dimension.is_time: true` in this OSI model."
+            )
+        select_parts.append(f"DATE_TRUNC('{time_grain}', {time_col}) AS time_bucket")
         group_dims.append("time_bucket")
+
     for d in dimensions or []:
         select_parts.append(d)
         group_dims.append(d)

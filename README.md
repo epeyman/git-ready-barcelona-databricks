@@ -13,21 +13,34 @@ Databricks SQL Warehouse
     └── Unity Catalog Metric View   ← source of truth
 ```
 
-The bridge exports a Databricks Metric View to OSI v1.0 YAML and exposes three MCP tools (`list_metrics`, `list_dimensions`, `query_metric`) that Gemini calls automatically via a manual tool-calling loop.
+The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MCP tools (`list_models`, `list_metrics`, `list_dimensions`, `query_metric`) that Gemini calls automatically via a manual tool-calling loop. Ship multiple datasets in one bridge — agents pick the right model per question.
 
 ## What's in this repo
 
 | Path | Purpose |
 |------|---------|
-| `notebooks/01_create_metric_view.py` | Creates the demo Metric View on `samples.tpch.orders` (widget-driven) |
-| `notebooks/02_export_to_osi.py` | Reads the Metric View and writes `model.osi.yaml` (widget-driven) |
-| `notebooks/03_test_queries.py` | Sanity-check `MEASURE()` queries (widget-driven) |
-| `osi_bridge/server.py` | The MCP server Gemini connects to |
+| `notebooks/01_create_metric_view.py` | Creates the demo Metric View on `samples.tpch.orders` |
+| `notebooks/02_export_to_osi.py` | Reads a Metric View and writes its OSI YAML |
+| `notebooks/03_test_queries.py` | Sanity-check `MEASURE()` queries |
+| `notebooks/10_nytaxi_metric_view.py` | NY Taxi Metric View on `samples.nyctaxi.trips` |
+| `notebooks/11_tpc_sales_metric_view.py` | TPC benchmark sales Metric View (defaults to `samples.tpch.lineitem`) |
+| `notebooks/12_lidlplus_metric_view.py` | Seeds a synthetic lidlplus transactions table + Metric View |
+| `osi_bridge/server.py` | MCP server (registry of OSI models) Gemini connects to |
+| `osi_bridge/registry.py` | Delegates to a pluggable `ModelStore` (file / sqlite / lakebase) |
 | `osi_bridge/exporter.py` | Standalone Databricks Metric View → OSI YAML converter |
 | `osi_bridge/translator.py` | OSI metric request → Databricks SQL with `MEASURE()` |
-| `osi_bridge/agent_metadata.yaml` | Synonyms/display-names merged into the OSI export |
+| `osi_bridge/parsers/osi.py` | OSI YAML loader + validator |
+| `osi_bridge/parsers/odcs.py` | ODCS v3 YAML → canonical OSI dict |
+| `osi_bridge/parsers/confluence.py` | Confluence page → OSI `ai_context` enrichment |
+| `osi_bridge/store/file.py` | File-backed model store (Phase 0 behaviour) |
+| `osi_bridge/store/sqlite.py` | SQLite-backed model store for local dev |
+| `osi_bridge/store/lakebase.py` | Databricks Lakebase / Postgres model store |
+| `osi_bridge/store/schema.sql` | Postgres DDL for the model + version-history tables |
+| `osi_bridge/metadata/*.yaml` | Per-model companion metadata (synonyms, display names) |
+| `examples/models/*.osi.yaml` | Sample OSI YAML stubs — one per dataset |
+| `examples/odcs/*.odcs.yaml` | Sample ODCS v3 contracts for the four datasets |
 | `examples/gemini_client.py` | Minimal Gemini client (Databricks-hosted, MCP loop) |
-| `examples/model.osi.yaml` | Sample OSI YAML output |
+| `scripts/ingest_models.py` | Loads OSI + ODCS + Confluence into the model store |
 | `docs/ARCHITECTURE.md` | Diagrams and component responsibilities |
 | `docs/DEMO_SCRIPT.md` | The 5-minute hackathon demo |
 | `deploy/upload_to_workspace.sh` | Pushes notebooks into your Databricks workspace |
@@ -92,21 +105,24 @@ Two paths — pick one.
 ```bash
 python -m osi_bridge.exporter \
   --fqn "$OSI_CATALOG.$OSI_SCHEMA.$OSI_METRIC_VIEW" \
-  --out examples/model.osi.yaml
+  --out examples/models/orders.osi.yaml
 ```
+The exporter auto-merges the matching `osi_bridge/metadata/<view>.yaml` (or pass `--metadata` explicitly).
 
-**6b. From the workspace notebook:** open `02_export_to_osi`, set the widgets, **Run All**. Output lands at `/Workspace/Users/<you>/osi-demo/model.osi.yaml`.
+**6b. From the workspace notebook:** open `02_export_to_osi`, set the widgets, **Run All**. Output lands at `/Workspace/Users/<you>/osi-demo/model.osi.yaml` — copy it under `examples/models/`.
 
 ### 7. Start the OSI Bridge MCP server
 
+The bridge serves every `*.osi.yaml` in a directory as a separately addressable model:
 ```bash
-python -m osi_bridge.server --osi-model examples/model.osi.yaml
+python -m osi_bridge.server --models-dir examples/models
 ```
 You should see:
 ```
-[OSI Bridge] Loaded N metrics from examples/model.osi.yaml
+[OSI Bridge] Loaded 4 model(s) from examples/models: ['lidlplus_transactions_mv', 'nyctaxi_trips_mv', 'orders_mv', 'tpc_sales_mv']
 [OSI Bridge] MCP server listening on http://localhost:8000/sse
 ```
+Single-file mode still works for back-compat: `--osi-model examples/models/orders.osi.yaml`.
 
 ### 8. Run the Gemini client
 
@@ -116,9 +132,53 @@ python examples/gemini_client.py "What was total revenue by order priority?"
 ```
 You'll see the MCP tool calls Gemini issues, then a natural-language answer with concrete numbers.
 
-### 9. (Stretch) Multi-vendor demo
+### 9. Adding more datasets
 
-Swap `examples/model.osi.yaml` for a Dremio- or Strategy-exported OSI YAML (with that vendor's `custom_extensions.<vendor>` block populated and the bridge's `query_metric` adapted) and re-run step 8. The agent answers identically. **OSI is the contract.**
+For the GIT READY hackathon the bridge ships four models out of the box:
+
+| Model name | Dataset | Notebook |
+|-----------|---------|----------|
+| `orders_mv` | TPC-H orders (`samples.tpch.orders`) | `01_create_metric_view.py` |
+| `nyctaxi_trips_mv` | NYC yellow-cab trips (`samples.nyctaxi.trips`) | `10_nytaxi_metric_view.py` |
+| `tpc_sales_mv` | TPC benchmark sales line items (default: `samples.tpch.lineitem`) | `11_tpc_sales_metric_view.py` |
+| `lidlplus_transactions_mv` | Synthetic lidlplus transactions (seeded by the notebook) | `12_lidlplus_metric_view.py` |
+
+Run the notebook for whichever datasets you want, re-export each with `osi_bridge.exporter`, drop the resulting YAMLs into `examples/models/`, and the bridge picks them up on restart.
+
+### 10. Ingest into a model store (Phase 1)
+
+The bridge can read OSI models from disk *or* from a database. For the hackathon's "YAML in DB instead of files" requirement, run the ingestion CLI once, then start the server in `--store sqlite|lakebase` mode.
+
+```bash
+# Local dev — SQLite store, parses both OSI + ODCS
+python -m scripts.ingest_models \
+  --store sqlite --sqlite-path osi_bridge.db \
+  --osi-dir examples/models \
+  --odcs-dir examples/odcs
+
+# Lakebase / Postgres — same files, real Lakebase instance
+export OSI_BRIDGE_PG_DSN="postgresql://<user>:<oauth-token>@<lakebase-host>:5432/databricks_postgres?sslmode=require"
+python -m scripts.ingest_models --store lakebase --osi-dir examples/models --odcs-dir examples/odcs
+
+# Optional Confluence enrichment (merges page body into ai_context.instructions)
+export CONFLUENCE_BASE_URL=https://schwarz.atlassian.net
+export CONFLUENCE_TOKEN=...
+python -m scripts.ingest_models --store sqlite --sqlite-path osi_bridge.db \
+  --osi-dir examples/models --confluence-map orders_mv=1234567
+```
+
+Then point the server at the store:
+```bash
+python -m osi_bridge.server --store sqlite --sqlite-path osi_bridge.db
+# or
+python -m osi_bridge.server --store lakebase   # reads $OSI_BRIDGE_PG_DSN
+```
+
+Each ingestion appends an immutable row to `osi_model_versions` — the audit trail Schwarz needs for contract-revision history.
+
+### 11. (Stretch) Multi-vendor demo
+
+Swap any model in `examples/models/` for a Dremio- or Strategy-exported OSI YAML (with that vendor's `custom_extensions.<vendor>` block populated and the bridge's `query_metric` adapted) and re-run step 8. The agent answers identically. **OSI is the contract.**
 
 ## Architecture and demo script
 

@@ -1,0 +1,63 @@
+apiVersion: v3.0.0
+kind: DataContract
+id: nyctaxi-trips-v1
+status: active
+name: NYC Yellow-Cab Trips
+version: 1.0.0
+domain: mobility
+dataProduct: nyctaxi
+
+description:
+  purpose: Public NYC TLC yellow-cab trip records used as an open benchmark.
+  usage: Reference dataset for OSI / agentic-analytics demos.
+  limitations: Public sample only; not the full TLC archive.
+
+servers:
+  - server: production
+    type: databricks
+    catalog: samples
+    schema: nyctaxi
+    path: trips
+
+schema:
+  - name: nyctaxi_trips
+    physicalName: nyctaxi_trips_mv
+    description: NYC yellow-cab trips semantic projection
+    properties:
+      - name: pickup_zip
+        logicalType: string
+        physicalType: STRING
+        description: Pickup ZIP code
+        customProperties:
+          - property: display_name
+            value: Pickup ZIP
+          - property: ai_synonyms
+            value: [origin zip, pickup location, from]
+      - name: dropoff_zip
+        logicalType: string
+        physicalType: STRING
+        description: Drop-off ZIP code
+        customProperties:
+          - property: display_name
+            value: Drop-off ZIP
+          - property: ai_synonyms
+            value: [destination zip, drop off location, to]
+      - name: pickup_date
+        logicalType: date
+        physicalType: DATE
+        description: Date of pickup (calendar day)
+        customProperties:
+          - property: display_name
+            value: Pickup Date
+          - property: ai_synonyms
+            value: [date, day, when]
+          - property: sql_expression
+            value: CAST(tpep_pickup_datetime AS DATE)
+
+team:
+  - role: owner
+    username: data.platform@schwarz.com
+
+support:
+  - channel: "#data-platform"
+    tool: slack

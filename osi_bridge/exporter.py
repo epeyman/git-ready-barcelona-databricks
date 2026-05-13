@@ -15,7 +15,19 @@ from typing import Any
 import yaml
 from databricks import sql
 
-DEFAULT_METADATA = Path(__file__).parent / "agent_metadata.yaml"
+METADATA_DIR = Path(__file__).parent / "metadata"
+
+
+def _default_metadata_for(fqn: str) -> Path | None:
+    """Look up `osi_bridge/metadata/<view_name>.yaml` based on the FQN's last part."""
+    view = fqn.split(".")[-1]
+    # Strip a trailing `_mv` so metric_view `orders_mv` maps to `orders.yaml`.
+    stem = view[:-3] if view.endswith("_mv") else view
+    candidates = [METADATA_DIR / f"{view}.yaml", METADATA_DIR / f"{stem}.yaml"]
+    for c in candidates:
+        if c.exists():
+            return c
+    return None
 
 
 def fetch_metric_view_yaml(fqn: str) -> dict[str, Any]:
@@ -64,18 +76,17 @@ def db_to_osi(mv: dict[str, Any], fqn: str, agent_meta: dict[str, Any] | None = 
             },
         }
 
+    description = am.get("description") or mv.get("comment") or f"Semantic model for {name}"
+    instructions = am.get("ai_instructions") or (
+        f"Semantic model exported from Databricks Metric View {fqn}. "
+        "Use the metrics defined here for any quantitative question against this dataset."
+    )
     return {
         "version": "1.0",
         "semantic_model": [{
             "name": name,
-            "description": "Sales orders semantic model — OSI demo",
-            "ai_context": {
-                "instructions": (
-                    f"Semantic model exported from Databricks Metric View {fqn}. "
-                    "Use the metrics defined here for any quantitative question "
-                    "about orders or revenue."
-                )
-            },
+            "description": description,
+            "ai_context": {"instructions": instructions},
             "datasets": [{
                 "name": name,
                 "source": mv["source"],
@@ -98,10 +109,13 @@ def db_to_osi(mv: dict[str, Any], fqn: str, agent_meta: dict[str, Any] | None = 
 def export(fqn: str, output_path: str, metadata_path: str | None = None) -> None:
     mv = fetch_metric_view_yaml(fqn)
     am = None
-    meta_file = Path(metadata_path) if metadata_path else DEFAULT_METADATA
-    if meta_file.exists():
+    meta_file = Path(metadata_path) if metadata_path else _default_metadata_for(fqn)
+    if meta_file and meta_file.exists():
         with open(meta_file) as f:
             am = yaml.safe_load(f)
+        print(f"Using metadata from {meta_file}")
+    else:
+        print("No companion metadata file found — exporting without synonyms/display names.")
     osi = db_to_osi(mv, fqn, am)
     with open(output_path, "w") as f:
         yaml.safe_dump(osi, f, sort_keys=False)

@@ -1,0 +1,86 @@
+# NYC Taxi trips — OSI v1.0 stub. Regenerate by running
+#   notebooks/10_nytaxi_metric_view.py    (creates the Metric View)
+# and then
+#   python -m osi_bridge.exporter \
+#     --fqn "$OSI_CATALOG.$OSI_SCHEMA.nyctaxi_trips_mv" \
+#     --out examples/models/nyctaxi.osi.yaml \
+#     --metadata osi_bridge/metadata/nyctaxi.yaml
+version: '1.0'
+semantic_model:
+- name: nyctaxi_trips_mv
+  description: NYC yellow-cab trips semantic model — OSI demo on samples.nyctaxi.trips
+  ai_context:
+    instructions: Use these metrics for any quantitative question about NYC taxi
+      trips, fares, or distances.
+  datasets:
+  - name: nyctaxi_trips_mv
+    source: samples.nyctaxi.trips
+    fields:
+    - name: pickup_zip
+      description: Pickup ZIP code
+      expression:
+      - dialect: Databricks
+        sql: pickup_zip
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [origin zip, pickup location, from]
+        display_name: Pickup ZIP
+    - name: dropoff_zip
+      description: Drop-off ZIP code
+      expression:
+      - dialect: Databricks
+        sql: dropoff_zip
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [destination zip, drop off location, to]
+        display_name: Drop-off ZIP
+    - name: pickup_date
+      description: Date of pickup (calendar day)
+      expression:
+      - dialect: Databricks
+        sql: CAST(tpep_pickup_datetime AS DATE)
+      dimension:
+        is_time: true
+      ai_context:
+        synonyms: [date, day, when]
+        display_name: Pickup Date
+  metrics:
+  - name: total_fare
+    description: Sum of fare_amount across trips
+    expression:
+    - dialect: Databricks
+      sql: SUM(fare_amount)
+    ai_context:
+      synonyms: [revenue, fares, total fare]
+      display_name: Total Fare
+  - name: trip_count
+    description: Number of trips
+    expression:
+    - dialect: Databricks
+      sql: COUNT(*)
+    ai_context:
+      synonyms: [trips, rides, volume]
+      display_name: Trip Count
+  - name: avg_fare
+    description: Mean of fare_amount across trips
+    expression:
+    - dialect: Databricks
+      sql: AVG(fare_amount)
+    ai_context:
+      synonyms: [average fare, mean fare]
+      display_name: Average Fare
+  - name: avg_trip_distance
+    description: Mean of trip_distance across trips
+    expression:
+    - dialect: Databricks
+      sql: AVG(trip_distance)
+    ai_context:
+      synonyms: [average distance, mean trip distance]
+      display_name: Average Trip Distance
+  custom_extensions:
+    databricks:
+      metric_view_fqn: <catalog>.osi_demo.nyctaxi_trips_mv
+      query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
+        GROUP BY <dims>

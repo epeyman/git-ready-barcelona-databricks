@@ -1,0 +1,90 @@
+# TPC benchmark sales line items — OSI v1.0 stub. Regenerate by running
+#   notebooks/11_tpc_sales_metric_view.py    (creates the Metric View)
+# and then
+#   python -m osi_bridge.exporter \
+#     --fqn "$OSI_CATALOG.$OSI_SCHEMA.tpc_sales_mv" \
+#     --out examples/models/tpc_sales.osi.yaml \
+#     --metadata osi_bridge/metadata/tpc_sales.yaml
+#
+# Default source is samples.tpch.lineitem (universally available in Databricks
+# samples). The notebook supports a widget to switch to a real TPC-DS table
+# (e.g. samples.tpcds_sf1.store_sales) without changing this semantic model name.
+version: '1.0'
+semantic_model:
+- name: tpc_sales_mv
+  description: TPC benchmark sales line-items semantic model — OSI demo
+  ai_context:
+    instructions: Use these metrics for any quantitative question about TPC benchmark
+      sales line items (revenue, units, discounts).
+  datasets:
+  - name: tpc_sales_mv
+    source: samples.tpch.lineitem
+    fields:
+    - name: ship_mode
+      description: Line-item shipping mode (AIR, TRUCK, …)
+      expression:
+      - dialect: Databricks
+        sql: l_shipmode
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [shipping mode, shipping channel]
+        display_name: Ship Mode
+    - name: return_flag
+      description: Return status of the line item (R = returned, N/A otherwise)
+      expression:
+      - dialect: Databricks
+        sql: l_returnflag
+      dimension:
+        is_time: false
+      ai_context:
+        synonyms: [return status, returned]
+        display_name: Return Flag
+    - name: ship_date
+      description: Ship date of the line item
+      expression:
+      - dialect: Databricks
+        sql: l_shipdate
+      dimension:
+        is_time: true
+      ai_context:
+        synonyms: [date, day, when, ship date]
+        display_name: Ship Date
+  metrics:
+  - name: net_sales
+    description: Sum of extended price net of discount
+    expression:
+    - dialect: Databricks
+      sql: SUM(l_extendedprice * (1 - l_discount))
+    ai_context:
+      synonyms: [net revenue, sales, net]
+      display_name: Net Sales
+  - name: gross_sales
+    description: Sum of extended price (before discount)
+    expression:
+    - dialect: Databricks
+      sql: SUM(l_extendedprice)
+    ai_context:
+      synonyms: [gross revenue, gross]
+      display_name: Gross Sales
+  - name: units_sold
+    description: Sum of quantity across line items
+    expression:
+    - dialect: Databricks
+      sql: SUM(l_quantity)
+    ai_context:
+      synonyms: [units, quantity, volume]
+      display_name: Units Sold
+  - name: line_count
+    description: Number of line items
+    expression:
+    - dialect: Databricks
+      sql: COUNT(*)
+    ai_context:
+      synonyms: [rows, line items, count]
+      display_name: Line Count
+  custom_extensions:
+    databricks:
+      metric_view_fqn: <catalog>.osi_demo.tpc_sales_mv
+      query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
+        GROUP BY <dims>

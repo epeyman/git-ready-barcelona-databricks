@@ -1,0 +1,47 @@
+# Companion metadata for lidlplus_transactions_mv — merged into OSI YAML at export time.
+
+description: lidlplus loyalty transactions semantic model — synthetic demo data
+ai_instructions: >-
+  Use these metrics for any quantitative question about lidlplus basket
+  transactions, loyalty engagement, or store-level performance.
+
+dimensions:
+  country:
+    display_name: Country
+    description: Country code (DE, FR, ES, PL, IT)
+    synonyms: [market, country code, geo]
+  store_id:
+    display_name: Store ID
+    description: Store identifier
+    synonyms: [store, shop, branch]
+  loyalty_tier:
+    display_name: Loyalty Tier
+    description: Loyalty tier (none, bronze, silver, gold)
+    synonyms: [tier, loyalty level, membership]
+  payment_method:
+    display_name: Payment Method
+    description: Payment method (cash, card, lidlpay)
+    synonyms: [payment, tender]
+  transaction_date:
+    display_name: Transaction Date
+    description: Date of the transaction
+    is_time: true
+    synonyms: [date, day, when]
+
+metrics:
+  total_revenue:
+    display_name: Total Revenue
+    description: Sum of total_amount across transactions
+    synonyms: [revenue, sales, gmv, top line]
+  transaction_count:
+    display_name: Transaction Count
+    description: Number of transactions
+    synonyms: [transactions, baskets, tickets]
+  avg_basket:
+    display_name: Average Basket
+    description: Mean of total_amount across transactions
+    synonyms: [average basket, basket size, aov]
+  unique_customers:
+    display_name: Unique Customers
+    description: Distinct customers transacting in the period
+    synonyms: [distinct customers, unique shoppers]

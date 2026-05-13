@@ -1,0 +1,39 @@
+# Companion metadata for tpc_sales_mv — merged into OSI YAML at export time.
+
+description: TPC benchmark sales line-items semantic model — OSI demo
+ai_instructions: >-
+  Use these metrics for any quantitative question about TPC benchmark sales
+  line items (revenue, units, discounts).
+
+dimensions:
+  ship_mode:
+    display_name: Ship Mode
+    description: Line-item shipping mode (AIR, TRUCK, …)
+    synonyms: [shipping mode, shipping channel]
+  return_flag:
+    display_name: Return Flag
+    description: Return status of the line item (R = returned, N/A otherwise)
+    synonyms: [return status, returned]
+  ship_date:
+    display_name: Ship Date
+    description: Ship date of the line item
+    is_time: true
+    synonyms: [date, day, when, ship date]
+
+metrics:
+  net_sales:
+    display_name: Net Sales
+    description: Sum of extended price net of discount
+    synonyms: [net revenue, sales, net]
+  gross_sales:
+    display_name: Gross Sales
+    description: Sum of extended price (before discount)
+    synonyms: [gross revenue, gross]
+  units_sold:
+    display_name: Units Sold
+    description: Sum of quantity across line items
+    synonyms: [units, quantity, volume]
+  line_count:
+    display_name: Line Count
+    description: Number of line items
+    synonyms: [rows, line items, count]

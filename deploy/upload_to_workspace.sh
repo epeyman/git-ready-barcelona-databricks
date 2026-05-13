@@ -36,7 +36,16 @@ echo "Target:    ${TARGET}"
 
 databricks workspace mkdirs "${TARGET}" || true
 
-for nb in 01_create_metric_view.py:PYTHON 02_export_to_osi.py:PYTHON 03_test_queries.py:PYTHON; do
+NOTEBOOKS=(
+  "01_create_metric_view.py:PYTHON"
+  "02_export_to_osi.py:PYTHON"
+  "03_test_queries.py:PYTHON"
+  "10_nytaxi_metric_view.py:PYTHON"
+  "11_tpc_sales_metric_view.py:PYTHON"
+  "12_lidlplus_metric_view.py:PYTHON"
+)
+
+for nb in "${NOTEBOOKS[@]}"; do
   fn="${nb%%:*}"; lang="${nb##*:}"; base="${fn%.*}"
   src="${REPO_ROOT}/notebooks/${fn}"
   dst="${TARGET}/${base}"

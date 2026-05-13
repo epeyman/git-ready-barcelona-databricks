@@ -1,0 +1,90 @@
+# Open Data Contract Standard v3 — TPC-H orders.
+# Hand-authored to demonstrate the ODCS → OSI projection. In production
+# Schwarz checks ODCS files into git; this one mirrors what an SA would
+# write for the demo orders dataset.
+
+apiVersion: v3.0.0
+kind: DataContract
+id: orders-v1
+status: active
+name: Sales Orders
+version: 1.0.0
+domain: sales
+dataProduct: orders
+
+description:
+  purpose: Canonical sales orders fact for finance and operations.
+  usage: Revenue reporting, fulfilment SLA tracking, clerk productivity.
+  limitations: Returns are not modelled here — see returns-v1.
+
+servers:
+  - server: production
+    type: databricks
+    catalog: main
+    schema: osi_demo
+    path: orders_mv
+
+schema:
+  - name: orders
+    physicalName: orders_mv
+    description: TPC-H orders semantic projection
+    properties:
+      - name: order_priority
+        logicalType: string
+        physicalType: STRING
+        description: TPC-H order priority — 1-URGENT through 5-LOW
+        examples: ["1-URGENT", "2-HIGH"]
+        customProperties:
+          - property: display_name
+            value: Order Priority
+          - property: ai_synonyms
+            value: [priority, urgency]
+          - property: sql_expression
+            value: o_orderpriority
+      - name: order_status
+        logicalType: string
+        physicalType: STRING
+        description: O = open, F = fulfilled, P = in-progress
+        customProperties:
+          - property: display_name
+            value: Order Status
+          - property: ai_synonyms
+            value: [status, state]
+          - property: sql_expression
+            value: o_orderstatus
+      - name: clerk
+        logicalType: string
+        physicalType: STRING
+        description: Clerk who processed the order
+        customProperties:
+          - property: display_name
+            value: Clerk
+          - property: sql_expression
+            value: o_clerk
+      - name: order_date
+        logicalType: date
+        physicalType: DATE
+        description: Date the order was placed
+        customProperties:
+          - property: display_name
+            value: Order Date
+          - property: ai_synonyms
+            value: [date, when, period]
+          - property: sql_expression
+            value: o_orderdate
+
+quality:
+  - rule: not_null
+    column: order_status
+  - rule: not_null
+    column: order_date
+
+team:
+  - role: owner
+    username: data.sales@schwarz.com
+  - role: steward
+    username: finance.bi@schwarz.com
+
+support:
+  - channel: "#sales-data-platform"
+    tool: slack

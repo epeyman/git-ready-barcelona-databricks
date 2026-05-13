@@ -1,0 +1,64 @@
+apiVersion: v3.0.0
+kind: DataContract
+id: tpc-sales-v1
+status: active
+name: TPC Benchmark Sales Line Items
+version: 1.0.0
+domain: benchmarking
+dataProduct: tpc_sales
+
+description:
+  purpose: Benchmark sales fact for throughput / cost comparison demos.
+  usage: Standing in for the eventual TPC-DS store_sales contract; swap the
+    server path to samples.tpcds_sf1.store_sales once available.
+  limitations: TPC-H lineitem proxy until a TPC-DS workspace is wired up.
+
+servers:
+  - server: production
+    type: databricks
+    catalog: samples
+    schema: tpch
+    path: lineitem
+
+schema:
+  - name: tpc_sales
+    physicalName: tpc_sales_mv
+    description: TPC benchmark sales line items semantic projection
+    properties:
+      - name: ship_mode
+        logicalType: string
+        physicalType: STRING
+        description: Line-item shipping mode (AIR, TRUCK, …)
+        customProperties:
+          - property: display_name
+            value: Ship Mode
+          - property: ai_synonyms
+            value: [shipping mode, shipping channel]
+          - property: sql_expression
+            value: l_shipmode
+      - name: return_flag
+        logicalType: string
+        physicalType: STRING
+        description: Return status (R = returned, otherwise N/A)
+        customProperties:
+          - property: display_name
+            value: Return Flag
+          - property: ai_synonyms
+            value: [return status, returned]
+          - property: sql_expression
+            value: l_returnflag
+      - name: ship_date
+        logicalType: date
+        physicalType: DATE
+        description: Ship date of the line item
+        customProperties:
+          - property: display_name
+            value: Ship Date
+          - property: ai_synonyms
+            value: [date, day, when, ship date]
+          - property: sql_expression
+            value: l_shipdate
+
+team:
+  - role: owner
+    username: data.platform@schwarz.com

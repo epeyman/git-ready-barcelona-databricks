@@ -1,0 +1,41 @@
+# Companion metadata for nyctaxi_trips_mv — merged into OSI YAML at export time.
+# Databricks Metric View YAML only stores name/expr/window on columns and
+# measures; synonyms, display names, and descriptions live here.
+
+description: NYC yellow-cab trips semantic model — OSI demo on samples.nyctaxi.trips
+ai_instructions: >-
+  Use these metrics for any quantitative question about NYC taxi trips, fares,
+  or distances.
+
+dimensions:
+  pickup_zip:
+    display_name: Pickup ZIP
+    description: Pickup ZIP code
+    synonyms: [origin zip, pickup location, from]
+  dropoff_zip:
+    display_name: Drop-off ZIP
+    description: Drop-off ZIP code
+    synonyms: [destination zip, drop off location, to]
+  pickup_date:
+    display_name: Pickup Date
+    description: Date of pickup (calendar day)
+    is_time: true
+    synonyms: [date, day, when]
+
+metrics:
+  total_fare:
+    display_name: Total Fare
+    description: Sum of fare_amount across trips
+    synonyms: [revenue, fares, total fare]
+  trip_count:
+    display_name: Trip Count
+    description: Number of trips
+    synonyms: [trips, rides, volume]
+  avg_fare:
+    display_name: Average Fare
+    description: Mean of fare_amount across trips
+    synonyms: [average fare, mean fare]
+  avg_trip_distance:
+    display_name: Average Trip Distance
+    description: Mean of trip_distance across trips
+    synonyms: [average distance, mean trip distance]
