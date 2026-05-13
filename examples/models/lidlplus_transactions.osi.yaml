@@ -18,7 +18,7 @@ semantic_model:
       basket transactions, loyalty engagement, or store-level performance.
   datasets:
   - name: lidlplus_transactions_mv
-    source: <catalog>.osi_demo.lidlplus_transactions
+    source: peymandemoaws_catalog.osi_demo.lidlplus_transactions
     fields:
     - name: country
       description: Country code (DE, FR, ES, PL, IT)
@@ -105,6 +105,6 @@ semantic_model:
       display_name: Unique Customers
   custom_extensions:
     databricks:
-      metric_view_fqn: <catalog>.osi_demo.lidlplus_transactions_mv
+      metric_view_fqn: peymandemoaws_catalog.osi_demo.lidlplus_transactions_mv
       query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
         GROUP BY <dims>

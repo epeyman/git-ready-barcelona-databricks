@@ -85,6 +85,6 @@ semantic_model:
       display_name: Line Count
   custom_extensions:
     databricks:
-      metric_view_fqn: <catalog>.osi_demo.tpc_sales_mv
+      metric_view_fqn: peymandemoaws_catalog.osi_demo.tpc_sales_mv
       query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
         GROUP BY <dims>

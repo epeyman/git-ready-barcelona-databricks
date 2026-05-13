@@ -59,6 +59,10 @@ The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MC
 
 See [TESTING.md](TESTING.md) for a single linear walkthrough that exercises every phase (registry → ODCS → portal → vendor adapters → provisioning → producer journey → lineage → approval). Each step lists the command, what to expect, and which credentials it needs — most of the bridge is testable offline.
 
+## Running the demo
+
+A deployment of this portal is live at https://git-ready-portal-7474644741537065.aws.databricksapps.com (`fevm-peymandemoaws` workspace). See [DEMO.md](DEMO.md) for the five-minute pitch, the twenty-minute full hackathon story, talking points by audience, and a troubleshooting checklist.
+
 ## Prerequisites
 
 - Python 3.11+ (`python3 --version`)

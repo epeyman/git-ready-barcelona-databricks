@@ -81,6 +81,6 @@ semantic_model:
       display_name: Average Trip Distance
   custom_extensions:
     databricks:
-      metric_view_fqn: <catalog>.osi_demo.nyctaxi_trips_mv
+      metric_view_fqn: peymandemoaws_catalog.osi_demo.nyctaxi_trips_mv
       query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
         GROUP BY <dims>

@@ -13,3 +13,4 @@ dist/
 .ruff_cache/
 osi_bridge.db
 *.db-journal
+.databricks/
