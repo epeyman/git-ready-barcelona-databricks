@@ -20,6 +20,8 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from osi_bridge import tools, translators
+from osi_bridge.producer import infer as producer_infer
+from osi_bridge.producer import publish as producer_publish
 from osi_bridge.provisioning import grant_all, rollup_status
 from osi_bridge.registry import Registry
 from osi_bridge.search import ai_fallback, search_metrics
@@ -35,8 +37,13 @@ from portal.schemas import (
     FallbackRequest,
     FallbackResponse,
     GrantEntry,
+    InferRequest,
+    InferResponse,
     MetricSummary,
     ModelSummary,
+    PublishFileResult,
+    PublishRequest,
+    PublishResponse,
     SearchHit,
     SearchResponse,
 )
@@ -234,12 +241,45 @@ def get_access_request(request_id: str) -> AccessRequestResponse:
     raise HTTPException(status_code=404, detail=f"Unknown request '{request_id}'")
 
 
+@app.post("/api/producer/infer", response_model=InferResponse)
+def post_producer_infer(req: InferRequest) -> InferResponse:
+    try:
+        result = producer_infer(
+            req.fqn,
+            domain=req.domain,
+            owner=req.owner,
+            description=req.description,
+            dry_run=req.dry_run,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
+    return InferResponse(**result)
+
+
+@app.post("/api/producer/publish", response_model=PublishResponse)
+def post_producer_publish(req: PublishRequest) -> PublishResponse:
+    try:
+        result = producer_publish(req.osi, req.odcs, dry_run=req.dry_run, store=_STORE)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}")
+    git_result = result["git"]
+    return PublishResponse(
+        model=result["model"],
+        mode=git_result["mode"],
+        files=[PublishFileResult(**f) for f in git_result["files"]],
+        persisted_to_store=result["persisted_to_store"],
+        commit_message=git_result.get("commit_message", ""),
+    )
+
+
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    import os as _os
     return {
         "status": "ok",
         "models": REGISTRY.names(),
         "persistent_access_log": _STORE is not None,
+        "git_publishing_configured": bool(_os.environ.get("GITHUB_TOKEN") and _os.environ.get("GITHUB_CONTRACTS_REPO")),
     }
 
 

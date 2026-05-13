@@ -32,6 +32,7 @@ The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MC
 | `osi_bridge/translator.py` | Phase 0 import path — re-exports the Databricks adapter's `build_sql` |
 | `osi_bridge/translators/` | Per-vendor adapter package: `databricks.py`, `dremio.py`, `strategy.py`, dispatcher in `__init__.py` |
 | `osi_bridge/provisioning/` | REST-based access provisioning across the same engines, with audit-log persistence in the store |
+| `osi_bridge/producer/` | Bottom-up producer journey — schema inspection, AI contract drafting, GitHub publishing |
 | `osi_bridge/search.py` | Metric search ranker + Gemini-backed AI fallback |
 | `portal/app.py` | FastAPI portal (catalog, search, chat, access requests) |
 | `portal/chat.py` | In-process Gemini MCP-loop chat handler |
@@ -245,7 +246,23 @@ curl -sX POST http://localhost:8000/api/access-requests \
   -d '{"model":"orders_multivendor_mv","requester":"alice@schwarz.com"}' | jq
 ```
 
-### 14. (Stretch) Bring your own vendor
+### 14. Producer journey (Phase 5)
+
+The portal's **Publish** page lets a data producer point at a UC table, get a Gemini-drafted OSI + ODCS pair, and commit it to a contracts repo in one click:
+
+1. **Describe.** Provide the source FQN, a domain, an owner email, and a short description.
+2. **Infer.** The bridge runs `DESCRIBE TABLE EXTENDED <fqn> AS JSON` against your warehouse, hands the column list to Gemini, and returns a complete OSI + ODCS YAML pair.
+3. **Publish.** Both YAMLs are committed to the GitHub contracts repo (`GITHUB_CONTRACTS_REPO`) and the new model is upserted into the local store so the catalog sees it immediately.
+
+Set `GITHUB_TOKEN`, `GITHUB_CONTRACTS_REPO`, and (optionally) `GITHUB_BRANCH` / `GITHUB_OSI_SUBDIR` / `GITHUB_ODCS_SUBDIR` to enable the real Git path. Without these, **Publish** runs in dry-run mode: it records the diff that would have been committed and still persists to the local store, so the demo path works offline.
+
+```bash
+curl -sX POST http://localhost:8000/api/producer/infer \
+  -H 'content-type: application/json' \
+  -d '{"fqn":"main.retail.checkouts","domain":"retail","owner":"retail@schwarz.com","dry_run":true}' | jq .metrics_summary
+```
+
+### 15. (Stretch) Bring your own vendor
 
 Drop a `osi_bridge/translators/<vendor>.py` implementing `build_query` + `execute` + `ENGINE_NAME`, add it to the priority tuple in `osi_bridge/translators/__init__.py`, and any OSI model with a `custom_extensions.<vendor>` block becomes addressable. For provisioning, add a matching `osi_bridge/provisioning/<vendor>.py` exposing `grant()` and register it in `osi_bridge/provisioning/service.py`.
 

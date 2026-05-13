@@ -106,3 +106,48 @@ class AccessRequestListEntry(BaseModel):
     requester: str
     status: str
     created_at: str | None = None
+
+
+# --- Producer journey ---
+
+
+class InferRequest(BaseModel):
+    fqn: str
+    domain: str
+    owner: str
+    description: str = ""
+    dry_run: bool = True
+
+
+class InferResponse(BaseModel):
+    fqn: str
+    osi_yaml: str
+    odcs_yaml: str
+    osi: dict[str, Any]
+    odcs: dict[str, Any]
+    columns: list[dict[str, Any]] = Field(default_factory=list)
+    metrics_summary: list[str] = Field(default_factory=list)
+    ai_used: bool = False
+
+
+class PublishRequest(BaseModel):
+    osi: dict[str, Any]
+    odcs: dict[str, Any]
+    dry_run: bool = True
+
+
+class PublishFileResult(BaseModel):
+    path: str
+    status: str
+    detail: str = ""
+    sha: str | None = None
+    html_url: str | None = None
+    commit_sha: str | None = None
+
+
+class PublishResponse(BaseModel):
+    model: str
+    mode: str  # 'live' | 'dry-run'
+    files: list[PublishFileResult] = Field(default_factory=list)
+    persisted_to_store: bool = False
+    commit_message: str = ""

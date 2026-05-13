@@ -48,6 +48,7 @@ function Nav({ active }) {
         <nav class="ml-6 flex gap-1">
           ${link("/", "Catalog")}
           ${link("/chat", "Chat")}
+          ${link("/publish", "Publish")}
           ${link("/requests", "My requests")}
         </nav>
       </div>
@@ -583,6 +584,187 @@ function Requests() {
   `;
 }
 
+// -------- Publish view (producer journey) --------
+
+function Publish() {
+  const [step, setStep] = useState("compose"); // compose | review | done
+  const [fqn, setFqn] = useState("main.sales.transactions");
+  const [domain, setDomain] = useState("sales");
+  const [owner, setOwner] = useState("");
+  const [description, setDescription] = useState("");
+  const [dryRun, setDryRun] = useState(true);
+  const [inferring, setInferring] = useState(false);
+  const [inferred, setInferred] = useState(null);
+  const [osiYaml, setOsiYaml] = useState("");
+  const [odcsYaml, setOdcsYaml] = useState("");
+  const [publishing, setPublishing] = useState(false);
+  const [published, setPublished] = useState(null);
+  const [error, setError] = useState(null);
+
+  const runInfer = async () => {
+    setInferring(true);
+    setError(null);
+    try {
+      const result = await api("/api/producer/infer", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fqn, domain, owner, description, dry_run: dryRun }),
+      });
+      setInferred(result);
+      setOsiYaml(result.osi_yaml);
+      setOdcsYaml(result.odcs_yaml);
+      setStep("review");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setInferring(false);
+    }
+  };
+
+  const runPublish = async () => {
+    setPublishing(true);
+    setError(null);
+    try {
+      // We publish the originally-inferred OSI/ODCS dicts, not the YAML
+      // textareas — browsers don't ship a YAML parser and the textareas
+      // here are a review surface, not an editor. Phase 6 stretch: ship a
+      // structured form for per-field edits.
+      const result = await api("/api/producer/publish", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ osi: inferred.osi, odcs: inferred.odcs, dry_run: dryRun }),
+      });
+      setPublished(result);
+      setStep("done");
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setPublishing(false);
+    }
+  };
+
+  return html`
+    <div class="max-w-5xl mx-auto px-6 py-8">
+      <h1 class="text-2xl font-semibold">Publish a dataset</h1>
+      <p class="text-slate-600 mt-1 mb-6">
+        Producer journey: point at a Unity Catalog table, get an AI-drafted OSI + ODCS contract,
+        review and edit it, then publish to the contracts repo and the model store in one click.
+      </p>
+
+      ${error ? html`<div class="bg-amber-50 border border-amber-200 rounded p-3 text-amber-900 mb-4">${error}</div>` : null}
+
+      ${step === "compose"
+        ? html`
+            <div class="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+              <label class="block">
+                <span class="text-sm text-slate-600">Source table FQN</span>
+                <input value=${fqn} onInput=${(e) => setFqn(e.target.value)}
+                       class="w-full mt-1 px-3 py-2 rounded border border-slate-300 font-mono"
+                       placeholder="catalog.schema.table" />
+              </label>
+              <div class="grid md:grid-cols-2 gap-3">
+                <label class="block">
+                  <span class="text-sm text-slate-600">Domain</span>
+                  <input value=${domain} onInput=${(e) => setDomain(e.target.value)}
+                         class="w-full mt-1 px-3 py-2 rounded border border-slate-300" placeholder="retail / sales / mobility" />
+                </label>
+                <label class="block">
+                  <span class="text-sm text-slate-600">Owner email</span>
+                  <input value=${owner} onInput=${(e) => setOwner(e.target.value)}
+                         class="w-full mt-1 px-3 py-2 rounded border border-slate-300" placeholder="team@schwarz.com" />
+                </label>
+              </div>
+              <label class="block">
+                <span class="text-sm text-slate-600">Short description</span>
+                <textarea value=${description} onInput=${(e) => setDescription(e.target.value)}
+                          class="w-full mt-1 px-3 py-2 rounded border border-slate-300 h-20"
+                          placeholder="One sentence describing the dataset's purpose."></textarea>
+              </label>
+              <label class="flex items-center gap-2 text-sm text-slate-600">
+                <input type="checkbox" checked=${dryRun} onChange=${(e) => setDryRun(e.target.checked)} />
+                Dry-run (no warehouse / Gemini / GitHub calls)
+              </label>
+              <button onClick=${runInfer} disabled=${inferring || !fqn || !domain || !owner}
+                      class="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-sm">
+                ${inferring ? "Inferring…" : "Infer contract"}
+              </button>
+            </div>
+          `
+        : null}
+
+      ${step === "review" && inferred
+        ? html`
+            <div class="space-y-4">
+              <div class="bg-white border border-slate-200 rounded p-4">
+                <div class="text-sm text-slate-600">
+                  Inferred ${inferred.columns.length} columns. AI enrichment:
+                  <${Pill} tone=${inferred.ai_used ? "emerald" : "slate"}>${inferred.ai_used ? "Gemini" : "heuristic"}<//>
+                </div>
+                <div class="mt-2 text-xs text-slate-500">
+                  Metrics: ${inferred.metrics_summary.join(", ")}
+                </div>
+              </div>
+              <div>
+                <label class="text-sm text-slate-600 font-medium">OSI YAML preview</label>
+                <pre class="w-full mt-1 px-3 py-2 rounded border border-slate-200 bg-slate-50 font-mono text-xs h-64 overflow-auto">${osiYaml}</pre>
+              </div>
+              <div>
+                <label class="text-sm text-slate-600 font-medium">ODCS YAML preview</label>
+                <pre class="w-full mt-1 px-3 py-2 rounded border border-slate-200 bg-slate-50 font-mono text-xs h-64 overflow-auto">${odcsYaml}</pre>
+              </div>
+              <div class="text-xs text-slate-500">
+                Previews are read-only. Edit the committed YAMLs in the contracts repo after
+                the first publish, or refine the input prompt and re-infer.
+              </div>
+              <div class="flex items-center gap-3">
+                <button onClick=${() => setStep("compose")}
+                        class="px-4 py-2 rounded border border-slate-300 text-sm">Back</button>
+                <button onClick=${runPublish} disabled=${publishing}
+                        class="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-sm">
+                  ${publishing ? "Publishing…" : "Publish contract"}
+                </button>
+                <label class="flex items-center gap-2 text-sm text-slate-600">
+                  <input type="checkbox" checked=${dryRun} onChange=${(e) => setDryRun(e.target.checked)} />
+                  Dry-run
+                </label>
+              </div>
+            </div>
+          `
+        : null}
+
+      ${step === "done" && published
+        ? html`
+            <div class="bg-white border border-slate-200 rounded-lg p-5 space-y-3">
+              <div class="flex items-center gap-2">
+                <span class="text-slate-900 font-medium">${published.model}</span>
+                <${Pill} tone=${published.mode === "live" ? "emerald" : "indigo"}>${published.mode}<//>
+                ${published.persisted_to_store ? html`<${Pill} tone="emerald">store: persisted<//>` : html`<${Pill} tone="slate">store: in-memory<//>`}
+              </div>
+              <div class="text-sm text-slate-600">${published.commit_message}</div>
+              <div class="space-y-2">
+                ${published.files.map(
+                  (f) => html`
+                    <div class="flex items-start gap-3 text-sm">
+                      <${Pill} tone=${f.status === "committed" ? "emerald" : f.status === "failed" ? "amber" : "indigo"}>${f.status}<//>
+                      <span class="font-mono text-xs">${f.path}</span>
+                      ${f.html_url ? html`<a class="text-indigo-600 underline text-xs" href=${f.html_url} target="_blank">commit</a>` : null}
+                      ${f.detail ? html`<span class="text-slate-500 text-xs">${f.detail}</span>` : null}
+                    </div>
+                  `,
+                )}
+              </div>
+              <div class="flex gap-2 pt-2">
+                <a class="px-3 py-1.5 rounded border border-slate-300 text-sm" href=${`#/m/${published.model}`}>View in catalog</a>
+                <button onClick=${() => { setStep("compose"); setInferred(null); setPublished(null); }}
+                        class="px-3 py-1.5 rounded border border-slate-300 text-sm">Publish another</button>
+              </div>
+            </div>
+          `
+        : null}
+    </div>
+  `;
+}
+
 // -------- Root --------
 
 function App() {
@@ -590,6 +772,7 @@ function App() {
   const view = useMemo(() => {
     if (hash.startsWith("/m/")) return { kind: "detail", name: decodeURIComponent(hash.slice(3)) };
     if (hash === "/chat") return { kind: "chat" };
+    if (hash === "/publish") return { kind: "publish" };
     if (hash === "/requests") return { kind: "requests" };
     return { kind: "catalog" };
   }, [hash]);
@@ -597,6 +780,7 @@ function App() {
   let body;
   if (view.kind === "detail") body = html`<${Detail} name=${view.name} />`;
   else if (view.kind === "chat") body = html`<${Chat} />`;
+  else if (view.kind === "publish") body = html`<${Publish} />`;
   else if (view.kind === "requests") body = html`<${Requests} />`;
   else body = html`<${Catalog} />`;
 
