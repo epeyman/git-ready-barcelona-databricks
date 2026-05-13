@@ -31,6 +31,7 @@ The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MC
 | `osi_bridge/exporter.py` | Standalone Databricks Metric View → OSI YAML converter |
 | `osi_bridge/translator.py` | Phase 0 import path — re-exports the Databricks adapter's `build_sql` |
 | `osi_bridge/translators/` | Per-vendor adapter package: `databricks.py`, `dremio.py`, `strategy.py`, dispatcher in `__init__.py` |
+| `osi_bridge/provisioning/` | REST-based access provisioning across the same engines, with audit-log persistence in the store |
 | `osi_bridge/search.py` | Metric search ranker + Gemini-backed AI fallback |
 | `portal/app.py` | FastAPI portal (catalog, search, chat, access requests) |
 | `portal/chat.py` | In-process Gemini MCP-loop chat handler |
@@ -225,9 +226,28 @@ From the chat / `query_metric` tool, pass `engine="dremio"` (or `"strategy"`) to
 
 Set `DREMIO_BASE_URL` / `DREMIO_TOKEN` and `STRATEGY_BASE_URL` / `STRATEGY_TOKEN` (see `.env.example`) to enable actual execution.
 
-### 13. (Stretch) Bring your own vendor
+### 13. Access provisioning + audit log (Phase 4)
 
-Drop a `osi_bridge/translators/<vendor>.py` implementing `build_query` + `execute` + `ENGINE_NAME`, add it to the priority tuple in `osi_bridge/translators/__init__.py`, and any OSI model with a `custom_extensions.<vendor>` block becomes addressable.
+Hitting **Request access** on a metric detail page now fans out to every engine the OSI declares:
+
+- Databricks → `GRANT SELECT ON TABLE <fqn> TO \`<email>\`` via the SQL warehouse
+- Dremio → `POST /api/v3/catalog/by-path/<path>/privileges` with `{"principal":…,"privileges":["SELECT"]}`
+- Strategy Mosaic → `PUT /api/v1/projects/<id>/permissions/users/<email>` with `{"role":"consumer"}` (override the role via `STRATEGY_PERMISSION_ROLE`)
+
+Engines whose credentials are missing return `status: "skipped"` with the exact call they would have made, so the demo still shows the contract on machines that aren't wired up to every vendor. Pass `"dry_run": true` in the POST body to render without calling anything.
+
+Each request and its per-engine outcomes are persisted to the `osi_access_requests` / `osi_access_grants` tables when `PORTAL_STORE` is `sqlite` or `lakebase`; the file-backed mode falls back to an in-memory log. The **My requests** page in the portal lists them and a row click renders the audit detail.
+
+```bash
+# All three engines visible in one request
+curl -sX POST http://localhost:8000/api/access-requests \
+  -H 'content-type: application/json' \
+  -d '{"model":"orders_multivendor_mv","requester":"alice@schwarz.com"}' | jq
+```
+
+### 14. (Stretch) Bring your own vendor
+
+Drop a `osi_bridge/translators/<vendor>.py` implementing `build_query` + `execute` + `ENGINE_NAME`, add it to the priority tuple in `osi_bridge/translators/__init__.py`, and any OSI model with a `custom_extensions.<vendor>` block becomes addressable. For provisioning, add a matching `osi_bridge/provisioning/<vendor>.py` exposing `grant()` and register it in `osi_bridge/provisioning/service.py`.
 
 ## Architecture and demo script
 

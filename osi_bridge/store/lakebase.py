@@ -127,6 +127,110 @@ class LakebaseModelStore:
             )
             return [{"version": r[0], "created_at": r[1].isoformat()} for r in cur.fetchall()]
 
+    # ---------- Access-request log ----------
+
+    def save_access_request(
+        self,
+        request_id: str,
+        model: str,
+        requester: str,
+        justification: str = "",
+    ) -> None:
+        with self._conn() as c, c.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO osi_access_requests (id, model, requester, justification, status)
+                VALUES (%s, %s, %s, %s, 'pending')
+                """,
+                (request_id, model, requester, justification),
+            )
+
+    def record_grants(self, request_id: str, grants: list[dict[str, Any]]) -> None:
+        with self._conn() as c, c.cursor() as cur:
+            for g in grants:
+                cur.execute(
+                    """
+                    INSERT INTO osi_access_grants (request_id, engine, status, detail)
+                    VALUES (%s, %s, %s, %s)
+                    """,
+                    (request_id, g["engine"], g["status"], g.get("detail", "")),
+                )
+
+    def update_access_status(self, request_id: str, status: str) -> None:
+        with self._conn() as c, c.cursor() as cur:
+            cur.execute(
+                """
+                UPDATE osi_access_requests
+                SET status = %s, updated_at = now()
+                WHERE id = %s
+                """,
+                (status, request_id),
+            )
+
+    def get_access_request(self, request_id: str) -> dict[str, Any] | None:
+        with self._conn() as c, c.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, model, requester, justification, status, created_at, updated_at
+                FROM osi_access_requests
+                WHERE id = %s
+                """,
+                (request_id,),
+            )
+            r = cur.fetchone()
+            if r is None:
+                return None
+            cur.execute(
+                """
+                SELECT engine, status, detail, created_at
+                FROM osi_access_grants
+                WHERE request_id = %s
+                ORDER BY id
+                """,
+                (request_id,),
+            )
+            grants = cur.fetchall()
+        return {
+            "id": r[0],
+            "model": r[1],
+            "requester": r[2],
+            "justification": r[3],
+            "status": r[4],
+            "created_at": r[5].isoformat() if r[5] else None,
+            "updated_at": r[6].isoformat() if r[6] else None,
+            "grants": [
+                {
+                    "engine": g[0],
+                    "status": g[1],
+                    "detail": g[2],
+                    "created_at": g[3].isoformat() if g[3] else None,
+                }
+                for g in grants
+            ],
+        }
+
+    def list_access_requests(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        with self._conn() as c, c.cursor() as cur:
+            cur.execute(
+                """
+                SELECT id, model, requester, status, created_at
+                FROM osi_access_requests
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (limit,),
+            )
+            return [
+                {
+                    "id": r[0],
+                    "model": r[1],
+                    "requester": r[2],
+                    "status": r[3],
+                    "created_at": r[4].isoformat() if r[4] else None,
+                }
+                for r in cur.fetchall()
+            ]
+
 
 def mint_lakebase_dsn(
     *,

@@ -82,6 +82,13 @@ class AccessRequest(BaseModel):
     model: str
     requester: str
     business_justification: str = ""
+    dry_run: bool = False
+
+
+class GrantEntry(BaseModel):
+    engine: str
+    status: str
+    detail: str = ""
 
 
 class AccessRequestResponse(BaseModel):
@@ -89,4 +96,13 @@ class AccessRequestResponse(BaseModel):
     model: str
     requester: str
     status: str
-    note: str
+    note: str = ""
+    grants: list[GrantEntry] = Field(default_factory=list)
+
+
+class AccessRequestListEntry(BaseModel):
+    id: str
+    model: str
+    requester: str
+    status: str
+    created_at: str | None = None

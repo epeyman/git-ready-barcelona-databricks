@@ -354,9 +354,28 @@ function Detail({ name }) {
       <div class="bg-white border border-slate-200 rounded-lg p-4 space-y-3">
         ${requestResult
           ? html`
-              <div class="text-emerald-700">
-                Request ${requestResult.id.slice(0, 8)} submitted. Status: ${requestResult.status}.
-                <div class="text-xs text-slate-500 mt-1">${requestResult.note}</div>
+              <div>
+                <div class="flex items-center gap-2">
+                  <span class="text-slate-900 font-medium">Request ${requestResult.id.slice(0, 8)}</span>
+                  <${Pill} tone=${
+                    requestResult.status === "granted" ? "emerald" :
+                    requestResult.status === "failed" ? "amber" : "slate"
+                  }>${requestResult.status}<//>
+                </div>
+                <div class="mt-3 space-y-2">
+                  ${(requestResult.grants || []).map(
+                    (g) => html`
+                      <div class="flex items-start gap-3 text-sm">
+                        <${Pill} tone=${
+                          g.status === "granted" ? "emerald" :
+                          g.status === "failed" ? "amber" :
+                          g.status === "dry-run" ? "indigo" : "slate"
+                        }>${g.engine} · ${g.status}<//>
+                        <span class="text-slate-600 font-mono text-xs">${g.detail}</span>
+                      </div>
+                    `,
+                  )}
+                </div>
               </div>
             `
           : html`
@@ -378,8 +397,10 @@ function Detail({ name }) {
                 class="px-4 py-2 rounded bg-indigo-600 hover:bg-indigo-700 disabled:bg-slate-300 text-white text-sm"
               >${requesting ? "Submitting…" : "Request access"}</button>
               <div class="text-xs text-slate-500">
-                Phase 4 will provision access across Databricks, Dremio, and Strategy via REST.
-                For now this logs the request in-process.
+                Access is granted across every engine the model declares in
+                <span class="font-mono">custom_extensions</span>. Engines whose REST
+                credentials are not set return <span class="font-mono">skipped</span>
+                instead of failing the whole request.
               </div>
             `}
       </div>
@@ -496,32 +517,68 @@ function Chat() {
 
 function Requests() {
   const [items, setItems] = useState([]);
+  const [selected, setSelected] = useState(null);
   useEffect(() => {
     api("/api/access-requests").then(setItems).catch(console.error);
   }, []);
+  const openDetail = async (id) => {
+    setSelected(null);
+    const d = await api(`/api/access-requests/${encodeURIComponent(id)}`);
+    setSelected(d);
+  };
+  const toneFor = (s) =>
+    s === "granted" ? "emerald" :
+    s === "partial" ? "indigo" :
+    s === "failed" ? "amber" :
+    s === "dry-run" ? "indigo" : "slate";
   return html`
     <div class="max-w-4xl mx-auto px-6 py-8">
       <h1 class="text-2xl font-semibold">Access requests</h1>
       <p class="text-slate-600 mt-1 mb-4">
-        In-memory log for the hackathon prototype. Phase 4 will persist these and trigger
-        REST-based provisioning across Databricks, Dremio, and Strategy.
+        Each request fires a grant against every engine the model declares. Granted /
+        skipped / failed are recorded per engine so the audit trail captures exactly
+        what ran.
       </p>
       <div class="bg-white border border-slate-200 rounded-lg divide-y divide-slate-100">
         ${items.length === 0
           ? html`<div class="px-4 py-3 text-slate-500 text-sm">No requests yet.</div>`
           : items.map(
               (r) => html`
-                <div class="px-4 py-3">
+                <button onClick=${() => openDetail(r.id)} class="w-full text-left px-4 py-3 hover:bg-slate-50">
                   <div class="flex items-center justify-between">
                     <div class="font-medium">${r.model}</div>
-                    <${Pill} tone="amber">${r.status}<//>
+                    <${Pill} tone=${toneFor(r.status)}>${r.status}<//>
                   </div>
                   <div class="text-sm text-slate-600">by ${r.requester}</div>
-                  <div class="text-xs text-slate-400 mt-1">${r.id}</div>
-                </div>
+                  <div class="text-xs text-slate-400 mt-1 font-mono">${r.id}</div>
+                </button>
               `,
             )}
       </div>
+
+      ${selected
+        ? html`
+            <div class="mt-6 bg-white border border-slate-200 rounded-lg p-4">
+              <div class="flex items-center justify-between">
+                <div>
+                  <div class="font-medium">${selected.model}</div>
+                  <div class="text-sm text-slate-500">by ${selected.requester}</div>
+                </div>
+                <${Pill} tone=${toneFor(selected.status)}>${selected.status}<//>
+              </div>
+              <div class="mt-3 space-y-2">
+                ${(selected.grants || []).map(
+                  (g) => html`
+                    <div class="flex items-start gap-3 text-sm">
+                      <${Pill} tone=${toneFor(g.status)}>${g.engine} · ${g.status}<//>
+                      <span class="text-slate-600 font-mono text-xs">${g.detail}</span>
+                    </div>
+                  `,
+                )}
+              </div>
+            </div>
+          `
+        : null}
     </div>
   `;
 }

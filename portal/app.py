@@ -2,7 +2,9 @@
 
 Loads the registry from a backing model store (file, sqlite, or lakebase —
 controlled by env vars) at startup, then exposes a small JSON API consumed
-by the single-page preact/htm frontend in ./static/.
+by the single-page preact/htm frontend in ./static/. Access-requests are
+persisted to a SQLite or Lakebase store when available; the file-backed
+flow keeps an in-memory log so the demo path stays self-contained.
 """
 from __future__ import annotations
 
@@ -18,18 +20,21 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from osi_bridge import tools, translators
+from osi_bridge.provisioning import grant_all, rollup_status
 from osi_bridge.registry import Registry
 from osi_bridge.search import ai_fallback, search_metrics
 
 from portal import chat as chat_handler
 from portal.schemas import (
     AccessRequest,
+    AccessRequestListEntry,
     AccessRequestResponse,
     ChatRequest,
     ChatResponse,
     DimensionSummary,
     FallbackRequest,
     FallbackResponse,
+    GrantEntry,
     MetricSummary,
     ModelSummary,
     SearchHit,
@@ -40,12 +45,12 @@ load_dotenv(override=True)
 
 STATIC_DIR = Path(__file__).parent / "static"
 REGISTRY = Registry()
-# In-memory request log — Phase 4 will replace with persisted rows + real
-# provisioning across Databricks, Strategy, and Dremio.
-_ACCESS_LOG: list[AccessRequestResponse] = []
+_STORE: Any = None  # SqliteModelStore | LakebaseModelStore | None
+_INMEM_REQUESTS: list[dict[str, Any]] = []  # used only when _STORE is None
 
 
 def _init_registry() -> None:
+    global _STORE
     store_kind = os.environ.get("PORTAL_STORE", os.environ.get("OSI_BRIDGE_STORE", "file"))
     if store_kind == "file":
         path = os.environ.get("OSI_MODELS_DIR", "examples/models")
@@ -54,17 +59,23 @@ def _init_registry() -> None:
         from osi_bridge.store.sqlite import SqliteModelStore
 
         db = os.environ.get("OSI_BRIDGE_SQLITE", "osi_bridge.db")
-        REGISTRY.attach(SqliteModelStore(db))
+        store = SqliteModelStore(db)
+        REGISTRY.attach(store)
+        _STORE = store
     elif store_kind == "lakebase":
         from osi_bridge.store.lakebase import LakebaseModelStore
 
-        REGISTRY.attach(LakebaseModelStore(os.environ.get("OSI_BRIDGE_PG_DSN")))
+        store = LakebaseModelStore(os.environ.get("OSI_BRIDGE_PG_DSN"))
+        REGISTRY.attach(store)
+        _STORE = store
     else:
         raise RuntimeError(f"Unknown PORTAL_STORE {store_kind!r}")
     print(f"[Portal] Registry loaded from {store_kind}: {REGISTRY.names()}")
+    if _STORE is None:
+        print("[Portal] file-backed store has no access-request persistence; using in-memory log.")
 
 
-app = FastAPI(title="GIT READY data portal", version="0.2.0")
+app = FastAPI(title="GIT READY data portal", version="0.4.0")
 _init_registry()
 
 
@@ -112,7 +123,6 @@ def post_fallback(req: FallbackRequest) -> FallbackResponse:
     try:
         result = ai_fallback(REGISTRY, req.query)
     except Exception as e:
-        # Fallback degrades gracefully — surface the error to the UI as rationale.
         return FallbackResponse(
             query=req.query,
             rationale=f"AI fallback unavailable ({type(e).__name__}: {e}).",
@@ -136,34 +146,102 @@ def post_chat(req: ChatRequest) -> ChatResponse:
 
 @app.post("/api/access-requests", response_model=AccessRequestResponse)
 def post_access_request(req: AccessRequest) -> AccessRequestResponse:
-    if req.model not in REGISTRY.names():
-        raise HTTPException(status_code=404, detail=f"Unknown model '{req.model}'")
-    entry = AccessRequestResponse(
-        id=str(uuid.uuid4()),
+    try:
+        osi = REGISTRY.get(req.model)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+
+    request_id = str(uuid.uuid4())
+    results = grant_all(osi, req.requester, req.business_justification, dry_run=req.dry_run)
+    grants = [r.as_dict() for r in results]
+    status = rollup_status(results)
+    note = "; ".join(
+        f"{g['engine']}: {g['status']}"
+        for g in grants
+    )
+
+    if _STORE is not None:
+        _STORE.save_access_request(request_id, req.model, req.requester, req.business_justification)
+        _STORE.record_grants(request_id, grants)
+        _STORE.update_access_status(request_id, status)
+    else:
+        _INMEM_REQUESTS.append({
+            "id": request_id,
+            "model": req.model,
+            "requester": req.requester,
+            "justification": req.business_justification,
+            "status": status,
+            "grants": grants,
+            "created_at": datetime.utcnow().isoformat() + "Z",
+        })
+
+    print(
+        f"[Portal] access-request {request_id} {req.model} by {req.requester} "
+        f"→ {status}: {note}"
+    )
+
+    return AccessRequestResponse(
+        id=request_id,
         model=req.model,
         requester=req.requester,
-        status="pending",
-        note=(
-            "Phase 4 will provision access across Databricks, Dremio, and "
-            "Strategy via REST APIs. Logged in-memory for now."
-        ),
+        status=status,
+        note=note,
+        grants=[GrantEntry(**g) for g in grants],
     )
-    _ACCESS_LOG.append(entry)
-    print(f"[Portal] access-request {entry.id} for {req.model} by {req.requester} @ {datetime.utcnow().isoformat()}Z")
-    return entry
 
 
-@app.get("/api/access-requests", response_model=list[AccessRequestResponse])
-def list_access_requests() -> list[AccessRequestResponse]:
-    return list(_ACCESS_LOG)
+@app.get("/api/access-requests", response_model=list[AccessRequestListEntry])
+def list_access_requests() -> list[AccessRequestListEntry]:
+    if _STORE is not None:
+        return [AccessRequestListEntry(**r) for r in _STORE.list_access_requests()]
+    # In-memory fallback ordered newest first.
+    return [
+        AccessRequestListEntry(
+            id=r["id"],
+            model=r["model"],
+            requester=r["requester"],
+            status=r["status"],
+            created_at=r["created_at"],
+        )
+        for r in reversed(_INMEM_REQUESTS)
+    ]
+
+
+@app.get("/api/access-requests/{request_id}", response_model=AccessRequestResponse)
+def get_access_request(request_id: str) -> AccessRequestResponse:
+    if _STORE is not None:
+        entry = _STORE.get_access_request(request_id)
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"Unknown request '{request_id}'")
+        return AccessRequestResponse(
+            id=entry["id"],
+            model=entry["model"],
+            requester=entry["requester"],
+            status=entry["status"],
+            note="; ".join(f"{g['engine']}: {g['status']}" for g in entry["grants"]),
+            grants=[GrantEntry(**g) for g in entry["grants"]],
+        )
+    for r in _INMEM_REQUESTS:
+        if r["id"] == request_id:
+            return AccessRequestResponse(
+                id=r["id"],
+                model=r["model"],
+                requester=r["requester"],
+                status=r["status"],
+                note="; ".join(f"{g['engine']}: {g['status']}" for g in r["grants"]),
+                grants=[GrantEntry(**g) for g in r["grants"]],
+            )
+    raise HTTPException(status_code=404, detail=f"Unknown request '{request_id}'")
 
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
-    return {"status": "ok", "models": REGISTRY.names()}
+    return {
+        "status": "ok",
+        "models": REGISTRY.names(),
+        "persistent_access_log": _STORE is not None,
+    }
 
-
-# ----- Static SPA -----
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -175,8 +253,6 @@ def root() -> FileResponse:
 
 @app.exception_handler(404)
 async def spa_fallback(request, exc):  # type: ignore[no-untyped-def]
-    # API 404s pass through; everything else falls back to the SPA so the
-    # client-side router can take it.
     if request.url.path.startswith("/api/"):
         return JSONResponse(status_code=404, content={"detail": exc.detail})
     return FileResponse(STATIC_DIR / "index.html")
