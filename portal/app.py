@@ -21,6 +21,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from osi_bridge import tools, translators
+from osi_bridge.auth import get_token as _refresh_databricks_token
 from osi_bridge.discovery import list_metric_views
 from osi_bridge.exporter import db_to_osi, fetch_metric_view_yaml
 from osi_bridge.importer import import_osi
@@ -93,6 +94,21 @@ def _init_registry() -> None:
 
 app = FastAPI(title="Schwarz Git Ready Barcelona Hackathon data portal", version="0.4.0")
 _init_registry()
+
+
+@app.middleware("http")
+async def _databricks_token_refresh(request, call_next):
+    """Refresh the Databricks bearer token before each request if needed.
+
+    Most call sites read `os.environ['DATABRICKS_TOKEN']` directly at call
+    time. By calling get_token() here, we ensure the env var holds a
+    non-expired bearer before the request handler runs.
+    """
+    try:
+        _refresh_databricks_token()
+    except Exception as e:  # never block a request on refresh failure
+        print(f"[Portal] token refresh skipped: {type(e).__name__}: {e}")
+    return await call_next(request)
 
 
 @app.get("/api/models", response_model=list[ModelSummary])
