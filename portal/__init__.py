@@ -1,4 +1,4 @@
-"""GIT READY portal — FastAPI front-end over the OSI Bridge registry.
+"""Schwarz Git Ready Barcelona Hackathon portal — FastAPI front-end over the OSI Bridge registry.
 
 The portal is the user-facing layer of the hackathon prototype: a metric
 catalog with search, an AI fallback for missing KPIs, a request-access

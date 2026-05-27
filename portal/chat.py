@@ -23,14 +23,21 @@ from portal.schemas import ChatResponse, ToolCall
 
 
 SYSTEM_PROMPT = (
-    "You are the Schwarz GIT READY data portal's analytics agent. The portal "
+    "You are the Schwarz Git Ready Barcelona Hackathon data portal's analytics agent. The portal "
     "exposes a registry of OSI semantic models. Always call `list_models` "
     "first to discover what is available, then `list_metrics` (optionally "
     "filtered by `model`) to find the right metric, then `list_dimensions` "
     "for slicing options, and finally `query_metric` to fetch numbers from "
-    "the backing Databricks engine. After receiving results, answer in plain "
-    "English with concrete numbers. Cite the model name so the user can find "
-    "the contract owner."
+    "the backing Databricks engine. "
+    "Before constructing a WHERE-clause filter, read the matching dimension's "
+    "`description` and `synonyms` carefully — descriptions often list the "
+    "literal allowed values (e.g. \"Country code (DE, FR, ES, PL, IT)\"). "
+    "Always pass those literal codes to `filters` (e.g. value='DE'), not the "
+    "user's friendly name (e.g. 'Germany'). If unsure of the valid values, "
+    "first query the metric grouped by that dimension with no filter to see "
+    "the actual values, then re-query with the right literal. "
+    "After receiving results, answer in plain English with concrete numbers. "
+    "Cite the model name so the user can find the contract owner."
 )
 
 
@@ -83,8 +90,20 @@ def _tool_specs() -> list[dict[str, Any]]:
                     "properties": {
                         "model": {"type": "string"},
                         "metric": {"type": "string"},
-                        "dimensions": {"type": "array", "items": {"type": "string"}},
-                        "filters": {"type": "array", "items": {"type": "object"}},
+                        "dimensions": {"type": "array", "items": {"type": "string"}, "description": "Dimension names from list_dimensions"},
+                        "filters": {
+                            "type": "array",
+                            "description": "WHERE-clause filters. Each filter is {column, op, value} — e.g. {\"column\": \"country\", \"op\": \"=\", \"value\": \"Germany\"}. `value` may be a list to render IN(...).",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "column": {"type": "string", "description": "Dimension name to filter on"},
+                                    "op": {"type": "string", "description": "Comparison operator (=, !=, <, >, <=, >=, IN, LIKE)", "default": "="},
+                                    "value": {"description": "Literal value, or a list for IN(...)"},
+                                },
+                                "required": ["column", "value"],
+                            },
+                        },
                         "time_grain": {"type": "string", "enum": ["day", "week", "month", "quarter", "year"]},
                         "limit": {"type": "integer"},
                     },
@@ -115,6 +134,28 @@ def _dispatch(registry: Registry, name: str, args: dict[str, Any]) -> Any:
     raise ValueError(f"Unknown tool '{name}'")
 
 
+def _content_to_str(content: Any) -> str:
+    """Normalize OpenAI/Gemini message.content into a flat string.
+
+    Some Databricks-hosted Gemini responses return content as a list of
+    structured blocks (`[{"type":"text","text":"..."}]`) instead of a plain
+    string. ChatResponse.answer is typed `str`, so flatten before returning.
+    """
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for blk in content:
+            if isinstance(blk, str):
+                parts.append(blk)
+            elif isinstance(blk, dict) and blk.get("type") == "text":
+                parts.append(blk.get("text", ""))
+        return "".join(parts)
+    return str(content)
+
+
 def chat(registry: Registry, question: str, *, max_steps: int = 8) -> ChatResponse:
     """Run a Gemini MCP-style tool loop in-process and return the final answer."""
     from openai import OpenAI  # lazy import keeps unit tests independent of openai
@@ -139,7 +180,8 @@ def chat(registry: Registry, question: str, *, max_steps: int = 8) -> ChatRespon
             tool_choice="auto",
         )
         msg = resp.choices[0].message
-        assistant_turn: dict[str, Any] = {"role": "assistant", "content": msg.content or ""}
+        content_str = _content_to_str(msg.content)
+        assistant_turn: dict[str, Any] = {"role": "assistant", "content": content_str}
         if msg.tool_calls:
             assistant_turn["tool_calls"] = [
                 {
@@ -152,7 +194,7 @@ def chat(registry: Registry, question: str, *, max_steps: int = 8) -> ChatRespon
         messages.append(assistant_turn)
 
         if not msg.tool_calls:
-            return ChatResponse(answer=msg.content or "", trace=trace)
+            return ChatResponse(answer=content_str, trace=trace)
 
         for tc in msg.tool_calls:
             name = tc.function.name

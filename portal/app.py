@@ -1,4 +1,4 @@
-"""FastAPI entry point for the GIT READY portal.
+"""FastAPI entry point for the Schwarz Git Ready Barcelona Hackathon portal.
 
 Loads the registry from a backing model store (file, sqlite, or lakebase —
 controlled by env vars) at startup, then exposes a small JSON API consumed
@@ -15,17 +15,22 @@ from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+import yaml as _yaml
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 
 from osi_bridge import tools, translators
+from osi_bridge.discovery import list_metric_views
+from osi_bridge.exporter import db_to_osi, fetch_metric_view_yaml
+from osi_bridge.importer import import_osi
 from osi_bridge.lineage import get_lineage
 from osi_bridge.producer import infer as producer_infer
 from osi_bridge.producer import publish as producer_publish
 from osi_bridge.provisioning import grant_all, rollup_status
 from osi_bridge.registry import Registry
 from osi_bridge.search import ai_fallback, search_metrics
+from osi_bridge.store.mongo import MongoModelStore
 
 from portal import chat as chat_handler
 from portal.schemas import (
@@ -57,6 +62,7 @@ STATIC_DIR = Path(__file__).parent / "static"
 REGISTRY = Registry()
 _STORE: Any = None  # SqliteModelStore | LakebaseModelStore | None
 _INMEM_REQUESTS: list[dict[str, Any]] = []  # used only when _STORE is None
+_MONGO_STORE = MongoModelStore()  # in-memory mongomock for the sync demo
 
 
 def _init_registry() -> None:
@@ -85,7 +91,7 @@ def _init_registry() -> None:
         print("[Portal] file-backed store has no access-request persistence; using in-memory log.")
 
 
-app = FastAPI(title="GIT READY data portal", version="0.4.0")
+app = FastAPI(title="Schwarz Git Ready Barcelona Hackathon data portal", version="0.4.0")
 _init_registry()
 
 
@@ -395,6 +401,153 @@ def health() -> dict[str, Any]:
         "persistent_access_log": _STORE is not None,
         "git_publishing_configured": bool(_os.environ.get("GITHUB_TOKEN") and _os.environ.get("GITHUB_CONTRACTS_REPO")),
     }
+
+
+@app.post("/api/admin/sync-from-workspace")
+def post_admin_sync(
+    catalogs: str | None = None,
+    schemas: str | None = None,
+) -> dict[str, Any]:
+    """Discover Metric Views and upsert their OSI translation into Mongo.
+
+    Optional comma-separated filters: ?catalogs=foo,bar&schemas=osi_demo.
+    With no filters, the whole metastore is scanned.
+    """
+    cats = [c.strip() for c in catalogs.split(",")] if catalogs else None
+    schs = [s.strip() for s in schemas.split(",")] if schemas else None
+
+    try:
+        refs = list_metric_views(catalogs=cats, schemas=schs)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"discovery failed: {type(e).__name__}: {e}")
+
+    results: list[dict[str, Any]] = []
+    for ref in refs:
+        try:
+            mv = fetch_metric_view_yaml(ref.fqn)
+            osi = db_to_osi(mv, ref.fqn)
+            name = osi["semantic_model"][0]["name"]
+            version = _MONGO_STORE.save_model(name, osi)
+            results.append({
+                "fqn": ref.fqn,
+                "model": name,
+                "version": version,
+                "status": "ok",
+            })
+        except Exception as e:
+            results.append({
+                "fqn": ref.fqn,
+                "status": "failed",
+                "error": f"{type(e).__name__}: {e}",
+            })
+
+    ok = sum(1 for r in results if r["status"] == "ok")
+    return {
+        "total": len(results),
+        "succeeded": ok,
+        "failed": len(results) - ok,
+        "scanned_scope": {"catalogs": cats, "schemas": schs},
+        "results": results,
+    }
+
+
+@app.get("/api/admin/discover")
+def get_admin_discover(
+    catalogs: str | None = None,
+    schemas: str | None = None,
+) -> dict[str, Any]:
+    """List Metric Views the warehouse can see, without translating."""
+    cats = [c.strip() for c in catalogs.split(",")] if catalogs else None
+    schs = [s.strip() for s in schemas.split(",")] if schemas else None
+    try:
+        refs = list_metric_views(catalogs=cats, schemas=schs)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"discovery failed: {type(e).__name__}: {e}")
+    return {
+        "total": len(refs),
+        "scanned_scope": {"catalogs": cats, "schemas": schs},
+        "metric_views": [
+            {"fqn": r.fqn, "catalog": r.catalog, "schema": r.schema, "name": r.name}
+            for r in refs
+        ],
+    }
+
+
+@app.get("/api/admin/export-osi")
+def get_admin_export_osi(fqn: str) -> Response:
+    """Translate one Metric View to OSI YAML and stream it as a download."""
+    try:
+        mv = fetch_metric_view_yaml(fqn)
+        osi = db_to_osi(mv, fqn)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+    body = _yaml.safe_dump(osi, sort_keys=False)
+    filename = fqn.split(".")[-1] + ".osi.yaml"
+    return Response(
+        content=body,
+        media_type="application/x-yaml",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/admin/upload-to-mongo")
+def post_admin_upload_to_mongo(payload: dict[str, Any] = Body(...)) -> dict[str, Any]:
+    """Translate one MV (by FQN) and upsert it into the mock MongoDB."""
+    fqn = payload.get("fqn")
+    if not fqn:
+        raise HTTPException(status_code=400, detail="missing 'fqn' in body")
+    try:
+        mv = fetch_metric_view_yaml(fqn)
+        osi = db_to_osi(mv, fqn)
+        name = osi["semantic_model"][0]["name"]
+        version = _MONGO_STORE.save_model(name, osi)
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+    return {"fqn": fqn, "model": name, "version": version, "status": "ok"}
+
+
+@app.post("/api/admin/import-osi")
+async def post_admin_import_osi(
+    file: UploadFile = File(...),
+    target_catalog: str = Form(...),
+    target_schema: str = Form(...),
+    target_name: str | None = Form(None),
+    or_replace: bool = Form(True),
+) -> dict[str, Any]:
+    """Translate an uploaded OSI YAML into a Databricks Metric View and create it in UC."""
+    raw = await file.read()
+    try:
+        osi = _yaml.safe_load(raw)
+    except _yaml.YAMLError as e:
+        raise HTTPException(status_code=400, detail=f"invalid YAML: {e}")
+    if not isinstance(osi, dict) or "semantic_model" not in osi:
+        raise HTTPException(status_code=400, detail="file is not an OSI v1.0 document (missing semantic_model)")
+
+    try:
+        result = import_osi(
+            osi,
+            target_catalog=target_catalog,
+            target_schema=target_schema,
+            target_name=target_name or None,
+            or_replace=or_replace,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}")
+    return {"status": "ok", **result, "source_model_name": osi["semantic_model"][0]["name"]}
+
+
+@app.get("/api/admin/mongo-models")
+def get_admin_mongo_models() -> dict[str, Any]:
+    """Lightweight projection of what's currently in the mock Mongo."""
+    return {"models": _MONGO_STORE.summary()}
+
+
+@app.get("/api/admin/mongo-models/{name}")
+def get_admin_mongo_model(name: str) -> dict[str, Any]:
+    try:
+        return _MONGO_STORE.get(name)
+    except KeyError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

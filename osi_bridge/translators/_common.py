@@ -55,6 +55,25 @@ def _pick_sql(exprs: list[dict[str, Any]], dialect: str | None, fallback: str) -
     return fallback
 
 
+_FILTER_COLUMN_ALIASES = ("column", "dimension", "field", "name", "key")
+_FILTER_VALUE_ALIASES = ("value", "val", "values")
+
+
+def _filter_column(f: dict[str, Any]) -> Any:
+    """Pull the column name out of a filter dict, accepting common aliases."""
+    for k in _FILTER_COLUMN_ALIASES:
+        if k in f and f[k] is not None:
+            return f[k]
+    return None
+
+
+def _filter_value(f: dict[str, Any]) -> Any:
+    for k in _FILTER_VALUE_ALIASES:
+        if k in f:
+            return f[k]
+    raise KeyError(f"filter has no value field; expected one of {_FILTER_VALUE_ALIASES}: {f!r}")
+
+
 def validate(
     sm: dict[str, Any],
     metrics: list[str],
@@ -70,13 +89,27 @@ def validate(
         if d not in valid_dims:
             raise ValueError(f"Unknown dimension '{d}'. Valid: {sorted(valid_dims)}")
     for f in filters or []:
-        col = f.get("column")
+        col = _filter_column(f)
         if col not in valid_dims:
             raise ValueError(f"Unknown filter column '{col}'. Valid: {sorted(valid_dims)}")
 
 
 def render_filter(f: dict[str, Any]) -> str:
-    """Render a SQL WHERE clause from {column, op, value}. Shared across SQL adapters."""
-    col, op, val = f["column"], f.get("op", "="), f["value"]
-    rendered = f"'{val}'" if isinstance(val, str) else str(val)
-    return f"{col} {op} {rendered}"
+    """Render a SQL WHERE clause from {column, op, value}. Shared across SQL adapters.
+
+    `column` can also be given as `dimension`, `field`, `name`, or `key`;
+    `value` accepts `val` / `values`. Lists become an IN(...) clause.
+    """
+    col = _filter_column(f)
+    op = (f.get("op") or f.get("operator") or "=").strip()
+    val = _filter_value(f)
+
+    def _lit(v: Any) -> str:
+        return f"'{v}'" if isinstance(v, str) else str(v)
+
+    if isinstance(val, (list, tuple)):
+        rendered = "(" + ", ".join(_lit(v) for v in val) + ")"
+        if op == "=":
+            op = "IN"
+        return f"{col} {op} {rendered}"
+    return f"{col} {op} {_lit(val)}"

@@ -1,4 +1,4 @@
-# Databricks Apps manifest for the GIT READY portal.
+# Databricks Apps manifest for the Schwarz Git Ready Barcelona Hackathon portal.
 # Deploy with:
 #   databricks apps deploy --source-code-path . --app-name git-ready-portal
 #

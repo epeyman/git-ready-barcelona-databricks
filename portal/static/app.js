@@ -1,4 +1,4 @@
-// GIT READY data portal — preact + htm SPA, no build step.
+// Schwarz Git Ready Barcelona Hackathon data portal — preact + htm SPA, no build step.
 // Three views: catalog (list+search), detail (one model), chat (Gemini loop).
 // Routing is hash-based so the FastAPI SPA fallback only has to serve one
 // HTML file regardless of which page the user lands on.
@@ -43,7 +43,7 @@ function Nav({ active }) {
     <header class="bg-white border-b border-slate-200">
       <div class="max-w-6xl mx-auto px-6 py-3 flex items-center gap-4">
         <span class="font-bold tracking-tight text-slate-900">
-          GIT&nbsp;READY <span class="text-slate-400 font-normal">data portal</span>
+          Schwarz Git Ready Barcelona Hackathon <span class="text-slate-400 font-normal">data portal</span>
         </span>
         <nav class="ml-6 flex gap-1">
           ${link("/", "Catalog")}
@@ -51,6 +51,7 @@ function Nav({ active }) {
           ${link("/publish", "Publish")}
           ${link("/approvals", "Approvals")}
           ${link("/requests", "My requests")}
+          ${link("/admin", "Admin")}
         </nav>
       </div>
     </header>
@@ -911,6 +912,318 @@ function Publish() {
 
 // -------- Root --------
 
+function ImportOsi() {
+  const [file, setFile] = useState(null);
+  const [targetCatalog, setTargetCatalog] = useState("peymandemoaws_catalog");
+  const [targetSchema, setTargetSchema] = useState("osi_demo");
+  const [targetName, setTargetName] = useState("");
+  const [orReplace, setOrReplace] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState(null);
+  const [result, setResult] = useState(null);
+
+  const submit = async () => {
+    if (!file) {
+      setError("Pick a YAML file first.");
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    setResult(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      fd.append("target_catalog", targetCatalog);
+      fd.append("target_schema", targetSchema);
+      if (targetName.trim()) fd.append("target_name", targetName.trim());
+      fd.append("or_replace", String(orReplace));
+      const res = await fetch("/api/admin/import-osi", { method: "POST", body: fd });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ detail: res.statusText }));
+        throw new Error(body.detail || res.statusText);
+      }
+      setResult(await res.json());
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return html`
+    <div class="bg-white border border-slate-200 rounded p-4 mb-6">
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <label class="block md:col-span-3">
+          <span class="text-sm text-slate-600">OSI YAML file</span>
+          <input type="file" accept=".yaml,.yml,application/x-yaml,text/yaml"
+                 class="mt-1 block w-full text-sm"
+                 onChange=${(e) => setFile(e.target.files?.[0] || null)} />
+        </label>
+        <label class="block">
+          <span class="text-sm text-slate-600">Target catalog</span>
+          <input class="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                 value=${targetCatalog} onInput=${(e) => setTargetCatalog(e.target.value)} />
+        </label>
+        <label class="block">
+          <span class="text-sm text-slate-600">Target schema</span>
+          <input class="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                 value=${targetSchema} onInput=${(e) => setTargetSchema(e.target.value)} />
+        </label>
+        <label class="block">
+          <span class="text-sm text-slate-600">Override target name (optional)</span>
+          <input class="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                 placeholder="defaults to OSI semantic_model.name"
+                 value=${targetName} onInput=${(e) => setTargetName(e.target.value)} />
+        </label>
+      </div>
+      <label class="block mt-3">
+        <input type="checkbox" checked=${orReplace} onChange=${(e) => setOrReplace(e.target.checked)} />
+        <span class="text-sm text-slate-600 ml-2">CREATE OR REPLACE (uncheck to fail if the view already exists)</span>
+      </label>
+      <div class="mt-4 flex items-center gap-3">
+        <button class=${`px-4 py-2 rounded text-sm font-medium ${busy ? "bg-slate-300 text-slate-600" : "bg-amber-600 text-white hover:bg-amber-500"}`}
+                disabled=${busy} onClick=${submit}>
+          ${busy ? "Importing…" : "Import to Databricks"}
+        </button>
+        ${error && html`<span class="text-sm text-rose-600">${error}</span>`}
+      </div>
+      ${result && html`
+        <div class="mt-4">
+          <div class="flex items-center gap-2 mb-2">
+            <${Pill} tone="emerald">imported</${Pill}>
+            <span class="font-mono text-xs">${result.target_fqn}</span>
+          </div>
+          <details>
+            <summary class="text-xs text-slate-500 cursor-pointer">Generated Databricks Metric View YAML</summary>
+            <pre class="text-xs bg-slate-50 border border-slate-200 rounded p-2 mt-2">${result.mv_yaml}</pre>
+          </details>
+        </div>
+      `}
+    </div>
+  `;
+}
+
+function Admin() {
+  const [catalogs, setCatalogs] = useState("");
+  const [schemas, setSchemas] = useState("");
+  const [discovering, setDiscovering] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [error, setError] = useState(null);
+  const [discovered, setDiscovered] = useState(null); // {total, metric_views}
+  const [rowState, setRowState] = useState({}); // fqn -> {uploading, version, error}
+  const [bulkResult, setBulkResult] = useState(null);
+  const [stored, setStored] = useState([]);
+
+  const refresh = async () => {
+    try {
+      const r = await api("/api/admin/mongo-models");
+      setStored(r.models || []);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+  useEffect(() => { refresh(); }, []);
+
+  const scopeQS = () => {
+    const qs = new URLSearchParams();
+    if (catalogs.trim()) qs.set("catalogs", catalogs.trim());
+    if (schemas.trim()) qs.set("schemas", schemas.trim());
+    return qs.toString();
+  };
+
+  const discover = async () => {
+    setDiscovering(true);
+    setError(null);
+    setDiscovered(null);
+    setRowState({});
+    try {
+      const qs = scopeQS();
+      const r = await api("/api/admin/discover" + (qs ? "?" + qs : ""));
+      setDiscovered(r);
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setDiscovering(false);
+    }
+  };
+
+  const syncAll = async () => {
+    setSyncing(true);
+    setError(null);
+    setBulkResult(null);
+    try {
+      const qs = scopeQS();
+      const r = await api("/api/admin/sync-from-workspace" + (qs ? "?" + qs : ""), { method: "POST" });
+      setBulkResult(r);
+      await refresh();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const uploadOne = async (fqn) => {
+    setRowState((s) => ({ ...s, [fqn]: { ...(s[fqn] || {}), uploading: true, error: null } }));
+    try {
+      const r = await api("/api/admin/upload-to-mongo", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ fqn }),
+      });
+      setRowState((s) => ({ ...s, [fqn]: { uploading: false, version: r.version, model: r.model } }));
+      await refresh();
+    } catch (e) {
+      setRowState((s) => ({ ...s, [fqn]: { uploading: false, error: String(e) } }));
+    }
+  };
+
+  return html`
+    <div class="max-w-6xl mx-auto px-6 py-8">
+      <h1 class="text-2xl font-semibold mb-2">Workspace sync</h1>
+      <p class="text-slate-600 mb-6">
+        Discover the Metric Views the SQL warehouse can see, then export each
+        one to an OSI YAML file or push it into the central catalog (mock
+        MongoDB). Leave the filters blank to scan the whole metastore.
+      </p>
+
+      <div class="bg-white border border-slate-200 rounded p-4 mb-6">
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <label class="block">
+            <span class="text-sm text-slate-600">Catalogs (comma-separated, optional)</span>
+            <input class="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                   placeholder="peymandemoaws_catalog"
+                   value=${catalogs} onInput=${(e) => setCatalogs(e.target.value)} />
+          </label>
+          <label class="block">
+            <span class="text-sm text-slate-600">Schemas (comma-separated, optional)</span>
+            <input class="mt-1 w-full border border-slate-300 rounded px-2 py-1 text-sm font-mono"
+                   placeholder="osi_demo"
+                   value=${schemas} onInput=${(e) => setSchemas(e.target.value)} />
+          </label>
+        </div>
+        <div class="mt-4 flex items-center gap-3">
+          <button class=${`px-4 py-2 rounded text-sm font-medium ${discovering ? "bg-slate-300 text-slate-600" : "bg-slate-900 text-white hover:bg-slate-700"}`}
+                  disabled=${discovering || syncing} onClick=${discover}>
+            ${discovering ? "Discovering…" : "Discover metric views"}
+          </button>
+          <button class=${`px-4 py-2 rounded text-sm font-medium ${syncing ? "bg-slate-300 text-slate-600" : "bg-indigo-600 text-white hover:bg-indigo-500"}`}
+                  disabled=${discovering || syncing} onClick=${syncAll}>
+            ${syncing ? "Syncing all…" : "Sync all to MongoDB"}
+          </button>
+          ${error && html`<span class="text-sm text-rose-600">${error}</span>`}
+        </div>
+      </div>
+
+      ${discovered && html`
+        <div class="bg-white border border-slate-200 rounded p-4 mb-6">
+          <div class="flex items-center justify-between mb-3">
+            <h2 class="font-semibold">Found ${discovered.total} metric view${discovered.total === 1 ? "" : "s"}</h2>
+          </div>
+          ${discovered.total === 0
+            ? html`<p class="text-sm text-slate-500">No metric views in the selected scope.</p>`
+            : html`
+              <table class="w-full text-sm">
+                <thead class="text-left text-slate-500">
+                  <tr>
+                    <th class="py-1 pr-3">FQN</th>
+                    <th class="py-1 pr-3">Actions</th>
+                    <th class="py-1">Status</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${discovered.metric_views.map((mv) => {
+                    const st = rowState[mv.fqn] || {};
+                    return html`
+                      <tr class="border-t border-slate-100">
+                        <td class="py-1 pr-3 font-mono text-xs">${mv.fqn}</td>
+                        <td class="py-1 pr-3">
+                          <a class="inline-block px-2 py-1 rounded border border-slate-300 text-xs mr-2 hover:bg-slate-100"
+                             href=${`/api/admin/export-osi?fqn=${encodeURIComponent(mv.fqn)}`}>
+                            Download OSI YAML
+                          </a>
+                          <button class=${`inline-block px-2 py-1 rounded text-xs font-medium ${st.uploading ? "bg-slate-300 text-slate-600" : "bg-emerald-600 text-white hover:bg-emerald-500"}`}
+                                  disabled=${st.uploading} onClick=${() => uploadOne(mv.fqn)}>
+                            ${st.uploading ? "Uploading…" : "Upload to MongoDB"}
+                          </button>
+                        </td>
+                        <td class="py-1">
+                          ${st.version
+                            ? html`<${Pill} tone="emerald">stored v${st.version}</${Pill}>`
+                            : st.error
+                              ? html`<span class="text-rose-600 text-xs">${st.error}</span>`
+                              : html`<span class="text-slate-400 text-xs">—</span>`}
+                        </td>
+                      </tr>
+                    `;
+                  })}
+                </tbody>
+              </table>
+            `}
+        </div>
+      `}
+
+      ${bulkResult && html`
+        <div class="bg-white border border-slate-200 rounded p-4 mb-6">
+          <div class="flex gap-4 text-sm mb-3">
+            <${Pill} tone="slate">Scanned ${bulkResult.total}</${Pill}>
+            <${Pill} tone="emerald">Succeeded ${bulkResult.succeeded}</${Pill}>
+            <${Pill} tone=${bulkResult.failed ? "amber" : "slate"}>Failed ${bulkResult.failed}</${Pill}>
+          </div>
+          <table class="w-full text-sm">
+            <thead class="text-left text-slate-500">
+              <tr><th class="py-1 pr-3">FQN</th><th class="py-1 pr-3">Model</th><th class="py-1 pr-3">Version</th><th class="py-1">Status</th></tr>
+            </thead>
+            <tbody>
+              ${bulkResult.results.map((r) => html`
+                <tr class="border-t border-slate-100">
+                  <td class="py-1 pr-3 font-mono text-xs">${r.fqn}</td>
+                  <td class="py-1 pr-3">${r.model || "—"}</td>
+                  <td class="py-1 pr-3">${r.version ?? "—"}</td>
+                  <td class="py-1">
+                    ${r.status === "ok"
+                      ? html`<${Pill} tone="emerald">ok</${Pill}>`
+                      : html`<span class="text-rose-600 text-xs">${r.error}</span>`}
+                  </td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        </div>
+      `}
+
+      <h2 class="text-lg font-semibold mb-2 mt-2">Import OSI → Databricks Metric View</h2>
+      <p class="text-slate-600 mb-3 text-sm">
+        Pick an OSI v1.0 YAML file and a target catalog/schema. The portal
+        translates it to a Databricks Metric View YAML and runs
+        <span class="font-mono">CREATE OR REPLACE VIEW … WITH METRICS</span>
+        against the warehouse.
+      </p>
+      <${ImportOsi} />
+
+      <h2 class="text-lg font-semibold mb-2 mt-8">Currently in central catalog (MongoDB)</h2>
+      ${stored.length === 0
+        ? html`<p class="text-sm text-slate-500">Nothing stored yet — discover then upload, or use "Sync all".</p>`
+        : html`
+          <table class="w-full text-sm bg-white border border-slate-200 rounded">
+            <thead class="text-left text-slate-500">
+              <tr><th class="py-2 px-3">Model</th><th class="py-2 px-3">Source FQN</th><th class="py-2 px-3">Updated</th></tr>
+            </thead>
+            <tbody>
+              ${stored.map((m) => html`
+                <tr class="border-t border-slate-100">
+                  <td class="py-1 px-3 font-medium">${m.name}</td>
+                  <td class="py-1 px-3 font-mono text-xs">${m.source || "—"}</td>
+                  <td class="py-1 px-3 text-xs text-slate-500">${m.updated_at || ""}</td>
+                </tr>
+              `)}
+            </tbody>
+          </table>
+        `}
+    </div>
+  `;
+}
+
 function App() {
   const hash = useHashRoute();
   const view = useMemo(() => {
@@ -919,6 +1232,7 @@ function App() {
     if (hash.startsWith("/publish")) return { kind: "publish" };
     if (hash.startsWith("/approvals")) return { kind: "approvals" };
     if (hash.startsWith("/requests")) return { kind: "requests" };
+    if (hash.startsWith("/admin")) return { kind: "admin" };
     return { kind: "catalog" };
   }, [hash]);
 
@@ -928,6 +1242,7 @@ function App() {
   else if (view.kind === "publish") body = html`<${Publish} />`;
   else if (view.kind === "approvals") body = html`<${Approvals} />`;
   else if (view.kind === "requests") body = html`<${Requests} />`;
+  else if (view.kind === "admin") body = html`<${Admin} />`;
   else body = html`<${Catalog} />`;
 
   return html`

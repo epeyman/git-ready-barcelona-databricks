@@ -11,3 +11,5 @@ fastapi>=0.110.0
 uvicorn[standard]>=0.27.0
 # Optional — only required for the Lakebase / Postgres model store.
 psycopg[binary]>=3.1; extra != "no-pg"
+# In-memory Mongo for the workspace-sync demo. Swap to pymongo for real Mongo.
+mongomock>=4.1.2

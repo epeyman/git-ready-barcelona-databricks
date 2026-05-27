@@ -1,4 +1,4 @@
-# Demo guide — GIT READY data portal
+# Demo guide — Schwarz Git Ready Barcelona Hackathon data portal
 
 A scripted walkthrough of the deployed portal, written so anyone can pick it up and run a five-minute or twenty-minute version of the demo. For local-only verification (no deployment), use `TESTING.md` instead.
 
@@ -99,7 +99,7 @@ The lidlplus model has an ODCS owner — requests on it require approval.
    - **Source FQN:** `peymandemoaws_catalog.osi_demo.lidlplus_transactions` (the underlying Delta table the lidlplus notebook seeded)
    - **Domain:** `retail`
    - **Owner email:** your email
-   - **Description:** "Loyalty transaction events for the GIT READY demo"
+   - **Description:** "Loyalty transaction events for the Schwarz Git Ready Barcelona Hackathon demo"
 
 3. Click **Infer**. The page renders the inferred column list (real columns from `DESCRIBE TABLE EXTENDED`), a `gemini` or `heuristic` pill on the AI path, the proposed metrics, and read-only OSI + ODCS YAML previews. *"From a raw UC table to a complete OSI plus ODCS pair in one click."*
 

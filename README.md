@@ -152,7 +152,7 @@ You'll see the MCP tool calls Gemini issues, then a natural-language answer with
 
 ### 9. Adding more datasets
 
-For the GIT READY hackathon the bridge ships four models out of the box:
+For the Schwarz Git Ready Barcelona Hackathon hackathon the bridge ships four models out of the box:
 
 | Model name | Dataset | Notebook |
 |-----------|---------|----------|

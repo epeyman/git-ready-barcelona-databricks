@@ -10,7 +10,7 @@ dataProduct: lidlplus
 description:
   purpose: Basket-level lidlplus loyalty transactions across the European fleet.
   usage: Revenue analysis, loyalty engagement, store-level performance.
-  limitations: Synthetic data inside the GIT READY hackathon — the real
+  limitations: Synthetic data inside the Schwarz Git Ready Barcelona Hackathon hackathon — the real
     contract lives under domain=retail in the production catalog and points
     at lidlplus.gold.transactions.
 

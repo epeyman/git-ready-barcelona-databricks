@@ -138,7 +138,7 @@ def ai_fallback(
     summary = _catalog_summary(registry)
 
     system = (
-        "You are the Schwarz GIT READY data portal's discovery assistant. "
+        "You are the Schwarz Git Ready Barcelona Hackathon data portal's discovery assistant. "
         "A business user searched for a metric that does not exist in the OSI "
         "catalog. From the catalog summary, suggest one or more models whose "
         "data could plausibly answer the question, name the model owner from "

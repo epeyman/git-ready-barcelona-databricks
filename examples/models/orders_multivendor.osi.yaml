@@ -83,7 +83,7 @@ semantic_model:
       display_name: Average Order Value
   custom_extensions:
     databricks:
-      metric_view_fqn: <catalog>.osi_demo.orders_multivendor_mv
+      metric_view_fqn: peymandemoaws_catalog.osi_demo.orders_mv
       query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
         GROUP BY <dims>
     dremio:
