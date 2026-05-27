@@ -1,19 +1,62 @@
-# OSI ↔ Databricks ↔ Gemini Prototype
+# Schwarz Git Ready Barcelona Hackathon — OSI ↔ Databricks ↔ Gemini
 
-A working prototype that lets **Google Gemini** consume a **Databricks Unity Catalog Metric View** as an **Open Semantic Interchange (OSI v1.0)** model — without Cube in the middle.
+A working prototype that lets **Google Gemini** consume a **Databricks Unity Catalog Metric View** as an **Open Semantic Interchange (OSI v1.0)** model — and round-trip back. Built for the Schwarz Git Ready Barcelona Hackathon to demonstrate OSI as the vendor-neutral contract between semantic models and AI agents.
 
 ```
-Gemini (Databricks-hosted, OpenAI-compatible endpoint)
-    │
-    ▼  MCP / SSE
-OSI Bridge (this repo, ~250 LOC Python)
-    │
-    ▼  databricks-sql-connector
-Databricks SQL Warehouse
-    └── Unity Catalog Metric View   ← source of truth
+                          Gemini (Databricks-hosted FMAPI)
+                                      │
+                                      ▼  OpenAI-compatible tool-calling
+                          OSI Bridge (this repo, FastMCP + FastAPI)
+                            │                 │
+            registry ◄──────┤                 ▼  databricks-sql-connector
+   (file | sqlite |        │     Databricks SQL Warehouse
+    lakebase | mongo)       │           └── Unity Catalog Metric View
+                            ▼
+                      Other vendors (Dremio, Strategy Mosaic)
+                      via per-engine translators
 ```
 
-The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MCP tools (`list_models`, `list_metrics`, `list_dimensions`, `query_metric`) that Gemini calls automatically via a manual tool-calling loop. Ship multiple datasets in one bridge — agents pick the right model per question.
+The bridge loads a registry of OSI v1.0 YAML semantic models and exposes four MCP tools (`list_models`, `list_metrics`, `list_dimensions`, `query_metric`) that Gemini calls in a manual tool-calling loop. Ship multiple datasets in one bridge — the agent picks the right model per question.
+
+## What this build adds (Barcelona Hackathon delta)
+
+The fork extends the base OSI Bridge with a workspace-wide governance loop and a bi-directional Metric View ↔ OSI translator surfaced through the portal:
+
+- **Workspace sync.** `Admin → Sync all to MongoDB` discovers every Metric View the SQL warehouse can see (via `system.information_schema.tables`), translates each to OSI v1.0, and upserts into a (mock) MongoDB. Discovery is scope-filterable (catalog, schema).
+- **Per-MV export.** Each discovered view ships **Download OSI YAML** (streamed as a real `.osi.yaml` file) and **Upload to MongoDB** (single-view upsert with version history). The Mongo doc is OSI shape, not Databricks MV shape — verify at `/api/admin/mongo-models/<name>`.
+- **Import OSI → Databricks Metric View.** Upload an OSI YAML and a target catalog/schema; the portal translates back to Databricks Metric View YAML (v0.1) and runs `CREATE OR REPLACE VIEW … WITH METRICS LANGUAGE YAML` against the warehouse. Round-trips cleanly: export `orders_mv` → import as `orders_mv_imported` → `MEASURE(total_revenue)` returns identical numbers.
+- **Mock MongoDB store** (`osi_bridge/store/mongo.py`) using **mongomock** so the demo runs entirely in memory. Swapping to real Mongo is one line: pass `client=MongoClient(uri)` to `MongoModelStore`.
+- **Chat hardening.** `query_metric.filters` accepts column aliases (`column | dimension | field | name | key`) and value aliases (`value | val | values`); list values render as `IN(...)`. The tool schema and system prompt now nudge Gemini to use literal dimension values from descriptions (e.g. `value='DE'` for "Germany").
+
+### Where the new code lives
+
+| Path | Purpose |
+|------|---------|
+| `osi_bridge/discovery.py` | `list_metric_views(catalogs?, schemas?)` — workspace-wide Metric View discovery |
+| `osi_bridge/store/mongo.py` | `MongoModelStore` — mongomock-backed (or pymongo) registry implementation |
+| `osi_bridge/importer.py` | `osi_to_mv_yaml`, `create_metric_view`, `import_osi` — the inverse of the exporter |
+| `portal/app.py` (new endpoints) | `/api/admin/discover`, `/api/admin/export-osi`, `/api/admin/upload-to-mongo`, `/api/admin/sync-from-workspace`, `/api/admin/import-osi`, `/api/admin/mongo-models[/{name}]` |
+| `portal/static/app.js` (new components) | `Admin` (workspace sync + per-MV actions) and `ImportOsi` (file picker → MV creation) |
+| `osi_bridge/translators/_common.py` | Filter-shape aliasing + `IN(...)` list rendering |
+| `portal/chat.py` | Tighter `query_metric` tool schema + system prompt that maps friendly names to literal dimension values |
+
+### Try the new features in 30 seconds
+
+```bash
+# Already running the portal? Open the Admin tab:
+open http://localhost:8000/#/admin
+
+# Or drive the API directly:
+curl -sS -X POST "http://localhost:8000/api/admin/sync-from-workspace?catalogs=peymandemoaws_catalog&schemas=osi_demo" | jq
+
+# Round-trip one MV: export → import as a new view
+curl -sS "http://localhost:8000/api/admin/export-osi?fqn=peymandemoaws_catalog.osi_demo.orders_mv" -o /tmp/orders.osi.yaml
+curl -sS -X POST http://localhost:8000/api/admin/import-osi \
+  -F "file=@/tmp/orders.osi.yaml" \
+  -F "target_catalog=peymandemoaws_catalog" \
+  -F "target_schema=osi_demo" \
+  -F "target_name=orders_mv_imported"
+```
 
 ## What's in this repo
 
