@@ -58,6 +58,20 @@ curl -sS -X POST http://localhost:8000/api/admin/import-osi \
   -F "target_name=orders_mv_imported"
 ```
 
+## Reference YAMLs (TPC-DS, side-by-side Databricks Metric View + OSI v1.0)
+
+For OSI standardization work — direct field-level comparison against MetricFlow, Strategy Mosaic, Dremio, and other vendor YAML formats. All files run unchanged on any Databricks workspace because they use the public `samples.tpch.*` tables.
+
+| File | What it is |
+|------|------------|
+| [`docs/databricks-metric-view-yaml/SCHEMA.md`](docs/databricks-metric-view-yaml/SCHEMA.md) | Annotated field reference for Databricks Metric View YAML spec **1.1**: top-level, dimensions, measures, joins (with `rely`), window measures, **materialization**, and YAML formatting gotchas. |
+| [`orders.metric_view.yaml`](docs/databricks-metric-view-yaml/orders.metric_view.yaml) | Native UC Metric View YAML for `samples.tpch.orders` — full 1.1 metadata (comment, display_name, synonyms), plus a `FILTER (WHERE …)` measure. |
+| [`orders.osi.yaml`](docs/databricks-metric-view-yaml/orders.osi.yaml) | OSI v1.0 translation of the same model. |
+| [`lineitem.metric_view.yaml`](docs/databricks-metric-view-yaml/lineitem.metric_view.yaml) | Native UC Metric View YAML for `samples.tpch.lineitem` — star-schema join with `rely.at_most_one_match`, `FILTER` measure, **windowed rolling 7-day measure**, and a **`materialization` block** with one unaggregated + two aggregated rollups. |
+| [`lineitem.osi.yaml`](docs/databricks-metric-view-yaml/lineitem.osi.yaml) | OSI v1.0 translation of the same model. Window and materialization specifics ride along under `custom_extensions.databricks` since OSI v1.0 doesn't yet model them first-class. |
+
+Source for the schema reference: [Metric view YAML syntax reference (Microsoft Learn)](https://learn.microsoft.com/en-us/azure/databricks/business-semantics/metric-views/yaml-reference).
+
 ## What's in this repo
 
 | Path | Purpose |

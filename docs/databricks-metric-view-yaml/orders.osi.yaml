@@ -1,0 +1,119 @@
+# Open Semantic Interchange (OSI) v1.0 — TPC-H orders model
+#
+# Semantically equivalent to ./orders.metric_view.yaml — same fields, same
+# expressions, same measures — but expressed in OSI's vendor-neutral shape.
+#
+# Read alongside orders.metric_view.yaml to see exactly how the Databricks
+# native Metric View YAML (spec 1.1) maps to OSI v1.0.
+
+version: "1.0"
+semantic_model:
+  - name: orders_mv
+    description: TPC-H orders semantic model — sales orders rolled up by priority, status, clerk, and date
+    ai_context:
+      instructions: |
+        Semantic model exported from a Databricks Unity Catalog Metric View.
+        Use these metrics for any quantitative question about orders or revenue.
+
+    datasets:
+      - name: orders_mv
+        source: samples.tpch.orders
+        # OSI's per-engine SQL is captured in `expression` blocks below;
+        # this `filter` mirrors the native MV's top-level filter.
+        filter: o_orderstatus IN ('O', 'F', 'P')
+
+        fields:
+          - name: order_priority
+            description: TPC-DS order priority — 1-URGENT through 5-LOW
+            expression:
+              - dialect: Databricks
+                sql: o_orderpriority
+            dimension:
+              is_time: false
+            ai_context:
+              display_name: Order Priority
+              synonyms: [priority, urgency]
+
+          - name: order_status
+            description: 'O = Open, F = Fulfilled, P = In-progress'
+            expression:
+              - dialect: Databricks
+                sql: o_orderstatus
+            dimension:
+              is_time: false
+            ai_context:
+              display_name: Order Status
+              synonyms: [status, state]
+
+          - name: clerk
+            description: Clerk who processed the order
+            expression:
+              - dialect: Databricks
+                sql: o_clerk
+            dimension:
+              is_time: false
+            ai_context:
+              display_name: Clerk
+              synonyms: []
+
+          - name: order_date
+            description: Order placement date
+            expression:
+              - dialect: Databricks
+                sql: o_orderdate
+            dimension:
+              is_time: true
+            ai_context:
+              display_name: Order Date
+              synonyms: [date, when, period]
+
+    metrics:
+      - name: total_revenue
+        description: Sum of order totals across all orders
+        expression:
+          - dialect: Databricks
+            sql: SUM(o_totalprice)
+        ai_context:
+          display_name: Total Revenue
+          synonyms: [revenue, sales, gmv, top line]
+
+      - name: order_count
+        description: Number of orders
+        expression:
+          - dialect: Databricks
+            sql: COUNT(*)
+        ai_context:
+          display_name: Order Count
+          synonyms: [orders, volume]
+
+      - name: distinct_customers
+        description: Number of distinct customers placing orders
+        expression:
+          - dialect: Databricks
+            sql: COUNT(DISTINCT o_custkey)
+        ai_context:
+          display_name: Unique Customers
+          synonyms: [unique customers, distinct customers]
+
+      - name: avg_order_value
+        description: Average order total
+        expression:
+          - dialect: Databricks
+            sql: AVG(o_totalprice)
+        ai_context:
+          display_name: Avg Order Value
+          synonyms: [aov, average order]
+
+      - name: urgent_revenue
+        description: Total revenue from urgent-priority orders only
+        expression:
+          - dialect: Databricks
+            sql: SUM(o_totalprice) FILTER (WHERE o_orderpriority = '1-URGENT')
+        ai_context:
+          display_name: Urgent Revenue
+          synonyms: [urgent sales, p1 revenue]
+
+    custom_extensions:
+      databricks:
+        metric_view_fqn: peymandemoaws_catalog.osi_demo.orders_mv
+        query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters> GROUP BY <dims>

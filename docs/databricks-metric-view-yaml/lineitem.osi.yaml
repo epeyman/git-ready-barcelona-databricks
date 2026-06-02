@@ -1,0 +1,185 @@
+# Open Semantic Interchange (OSI) v1.0 — TPC-H line-item sales model
+#
+# Semantically equivalent to ./lineitem.metric_view.yaml — same join, same
+# expressions, same measures — but expressed in OSI's vendor-neutral shape.
+#
+# OSI v1.0 deliberately keeps materialization and window-aggregation
+# specifics in a `custom_extensions.databricks` block, since they don't
+# yet have first-class OSI fields. This is a known extension point.
+
+version: "1.0"
+semantic_model:
+  - name: tpc_sales_mv
+    description: TPC-H benchmark line-item sales — sales rolled up by ship mode, return flag, ship date
+    ai_context:
+      instructions: |
+        Line-item-level sales contract derived from TPC-H samples.
+        Use these metrics for any quantitative question about sales,
+        returns, or shipping mix.
+
+    datasets:
+      - name: tpc_sales_mv
+        source: samples.tpch.lineitem
+        filter: orders.o_orderstatus IN ('O', 'F')
+        # OSI does not yet model joins as first-class objects; the join is
+        # carried under custom_extensions so a Databricks adapter can
+        # rehydrate it. Dremio/Strategy adapters can read or ignore.
+
+        fields:
+          - name: ship_mode
+            description: Carrier mode (AIR, RAIL, SHIP, TRUCK, MAIL, REG AIR, FOB)
+            expression:
+              - dialect: Databricks
+                sql: l_shipmode
+            dimension:
+              is_time: false
+            ai_context:
+              display_name: Ship Mode
+              synonyms: [carrier, mode, shipping]
+
+          - name: return_flag
+            description: 'R = Returned, A = Accepted, N = Not yet'
+            expression:
+              - dialect: Databricks
+                sql: l_returnflag
+            dimension:
+              is_time: false
+            ai_context:
+              display_name: Return Flag
+              synonyms: [returned, return status]
+
+          - name: line_status
+            description: 'O = Open, F = Final'
+            expression:
+              - dialect: Databricks
+                sql: l_linestatus
+            dimension:
+              is_time: false
+            ai_context:
+              display_name: Line Status
+              synonyms: []
+
+          - name: ship_date
+            description: Date the line item was shipped
+            expression:
+              - dialect: Databricks
+                sql: l_shipdate
+            dimension:
+              is_time: true
+            ai_context:
+              display_name: Ship Date
+              synonyms: [shipped, date]
+
+          - name: order_priority
+            description: Priority of the parent order (joined from orders)
+            expression:
+              - dialect: Databricks
+                sql: orders.o_orderpriority
+            dimension:
+              is_time: false
+            ai_context:
+              display_name: Order Priority
+              synonyms: [priority]
+
+    metrics:
+      - name: gross_sales
+        description: Gross extended price before discounts
+        expression:
+          - dialect: Databricks
+            sql: SUM(l_extendedprice)
+        ai_context:
+          display_name: Gross Sales
+          synonyms: [gross revenue, list price total]
+
+      - name: net_sales
+        description: Extended price net of discount
+        expression:
+          - dialect: Databricks
+            sql: SUM(l_extendedprice * (1 - l_discount))
+        ai_context:
+          display_name: Net Sales
+          synonyms: [net revenue, post-discount sales]
+
+      - name: units_sold
+        description: Total units shipped across all line items
+        expression:
+          - dialect: Databricks
+            sql: SUM(l_quantity)
+        ai_context:
+          display_name: Units Sold
+          synonyms: [units, quantity, volume]
+
+      - name: line_count
+        description: Number of line items
+        expression:
+          - dialect: Databricks
+            sql: COUNT(*)
+        ai_context:
+          display_name: Line Count
+          synonyms: []
+
+      - name: avg_discount
+        description: Average discount rate across line items
+        expression:
+          - dialect: Databricks
+            sql: AVG(l_discount)
+        ai_context:
+          display_name: Avg Discount
+          synonyms: []
+
+      - name: returned_net_sales
+        description: Net sales from line items that were returned
+        expression:
+          - dialect: Databricks
+            sql: SUM(l_extendedprice * (1 - l_discount)) FILTER (WHERE l_returnflag = 'R')
+        ai_context:
+          display_name: Returned Net Sales
+          synonyms: [returns value]
+
+      - name: rolling_7d_net_sales
+        description: Trailing 7-day net sales aggregated as of the latest ship date in window
+        expression:
+          - dialect: Databricks
+            sql: SUM(l_extendedprice * (1 - l_discount))
+        ai_context:
+          display_name: 7-Day Rolling Net Sales
+          synonyms: [rolling sales, 7d sales]
+        # OSI v1.0 does not yet model windowed measures natively; the
+        # window spec is carried in custom_extensions for vendor rehydration.
+        custom_extensions:
+          databricks:
+            window:
+              - order: ship_date
+                range: trailing 7 day
+                semiadditive: last
+
+    custom_extensions:
+      databricks:
+        metric_view_fqn: peymandemoaws_catalog.osi_demo.tpc_sales_mv
+        query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters> GROUP BY <dims>
+
+        # Star-schema join — not first-class in OSI v1.0 yet, but the
+        # Databricks adapter rehydrates this when building MV YAML.
+        joins:
+          - name: orders
+            source: samples.tpch.orders
+            on: source.l_orderkey = orders.o_orderkey
+            rely:
+              at_most_one_match: true
+
+        # Materialization config — also not first-class in OSI v1.0;
+        # round-trips back into native YAML via the Databricks adapter.
+        materialization:
+          schedule: every 6 hours
+          mode: relaxed
+          materialized_views:
+            - name: baseline
+              type: unaggregated
+            - name: daily_ship_mode_rollup
+              type: aggregated
+              dimensions: [ship_date, ship_mode]
+              measures: [gross_sales, net_sales, units_sold, line_count]
+            - name: priority_return_rollup
+              type: aggregated
+              dimensions: [order_priority, return_flag]
+              measures: [net_sales, returned_net_sales, line_count]
