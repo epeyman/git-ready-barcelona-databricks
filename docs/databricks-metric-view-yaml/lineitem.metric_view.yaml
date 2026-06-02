@@ -1,0 +1,46 @@
+# Databricks Unity Catalog Metric View — native YAML
+# Source: samples.tpch.lineitem joined with samples.tpch.orders
+# Demonstrates: join, optional filter, multiple measures incl. derived measures.
+# Registered via:
+#   CREATE OR REPLACE VIEW <catalog>.<schema>.tpc_sales_mv
+#     WITH METRICS LANGUAGE YAML
+#     COMMENT 'TPC-H benchmark sales line-items semantic model'
+#   AS $$ <this file> $$;
+
+version: 0.1
+source: samples.tpch.lineitem
+
+# Demonstrating the join syntax — joins enrich the source with attributes
+# from another UC table, then dimensions and measures can reference both.
+joins:
+  - name: o
+    source: samples.tpch.orders
+    'on': samples.tpch.lineitem.l_orderkey = o.o_orderkey
+
+# Filter applies to the joined row set
+filter: o.o_orderstatus IN ('O', 'F')
+
+dimensions:
+  - name: ship_mode
+    expr: l_shipmode
+  - name: return_flag
+    expr: l_returnflag
+  - name: line_status
+    expr: l_linestatus
+  - name: ship_date
+    expr: l_shipdate
+  - name: order_priority
+    expr: o.o_orderpriority
+
+measures:
+  - name: gross_sales
+    expr: SUM(l_extendedprice)
+  - name: net_sales
+    # Derived measure — uses an arbitrary aggregate SQL expression
+    expr: SUM(l_extendedprice * (1 - l_discount))
+  - name: units_sold
+    expr: SUM(l_quantity)
+  - name: line_count
+    expr: COUNT(*)
+  - name: avg_discount
+    expr: AVG(l_discount)
