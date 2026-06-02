@@ -24,6 +24,7 @@ from typing import Any
 from osi_bridge.translators._common import (
     RenderedQuery,
     dim_expression,
+    get_custom_extension,
     metric_expression,
     render_filter,
     time_column,
@@ -43,11 +44,11 @@ def build_query(
     limit: int = 1000,
 ) -> RenderedQuery:
     sm = osi_model["semantic_model"][0]
-    ext = (sm.get("custom_extensions") or {}).get("dremio") or {}
+    ext = get_custom_extension(sm.get("custom_extensions"), "dremio")
     table = ext.get("table") or ext.get("dataset")
     if not table:
         raise ValueError(
-            "OSI model has no custom_extensions.dremio.table — set it to the Dremio "
+            "OSI model has no custom_extensions[vendor_name=dremio].table — set it to the Dremio "
             "dataset path (e.g. prod.sales.orders) before pointing the dispatcher here."
         )
 

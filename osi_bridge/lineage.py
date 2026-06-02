@@ -32,10 +32,12 @@ LIMIT 100
 
 
 def get_lineage(store: Any, model_name: str, *, max_rows: int = 25) -> dict[str, Any]:
+    from osi_bridge.translators._common import get_custom_extension
+
     osi = store.get(model_name)
     sm = osi["semantic_model"][0]
     source_fqn = (sm.get("datasets") or [{}])[0].get("source") or ""
-    fqn = (sm.get("custom_extensions") or {}).get("databricks", {}).get("metric_view_fqn") or source_fqn
+    fqn = get_custom_extension(sm.get("custom_extensions"), "databricks").get("metric_view_fqn") or source_fqn
 
     upstream, downstream, mode = _lineage_rows(fqn, max_rows=max_rows)
     versions: list[dict[str, Any]] = []

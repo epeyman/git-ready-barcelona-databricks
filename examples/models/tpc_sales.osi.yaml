@@ -1,18 +1,7 @@
-# TPC benchmark sales line items — OSI v1.0 stub. Regenerate by running
-#   notebooks/11_tpc_sales_metric_view.py    (creates the Metric View)
-# and then
-#   python -m osi_bridge.exporter \
-#     --fqn "$OSI_CATALOG.$OSI_SCHEMA.tpc_sales_mv" \
-#     --out examples/models/tpc_sales.osi.yaml \
-#     --metadata osi_bridge/metadata/tpc_sales.yaml
-#
-# Default source is samples.tpch.lineitem (universally available in Databricks
-# samples). The notebook supports a widget to switch to a real TPC-DS table
-# (e.g. samples.tpcds_sf1.store_sales) without changing this semantic model name.
-version: '1.0'
+version: 0.2.0.dev0
 semantic_model:
 - name: tpc_sales_mv
-  description: TPC benchmark sales line-items semantic model — OSI demo
+  description: "TPC benchmark sales line-items semantic model \u2014 OSI demo"
   ai_context:
     instructions: Use these metrics for any quantitative question about TPC benchmark
       sales line items (revenue, units, discounts).
@@ -21,70 +10,88 @@ semantic_model:
     source: samples.tpch.lineitem
     fields:
     - name: ship_mode
-      description: Line-item shipping mode (AIR, TRUCK, …)
       expression:
-      - dialect: Databricks
-        sql: l_shipmode
+        dialects:
+        - dialect: DATABRICKS
+          expression: l_shipmode
+      description: "Line-item shipping mode (AIR, TRUCK, \u2026)"
       dimension:
         is_time: false
       ai_context:
-        synonyms: [shipping mode, shipping channel]
-        display_name: Ship Mode
+        synonyms:
+        - shipping mode
+        - shipping channel
     - name: return_flag
-      description: Return status of the line item (R = returned, N/A otherwise)
       expression:
-      - dialect: Databricks
-        sql: l_returnflag
+        dialects:
+        - dialect: DATABRICKS
+          expression: l_returnflag
+      description: Return status of the line item (R = returned, N/A otherwise)
       dimension:
         is_time: false
       ai_context:
-        synonyms: [return status, returned]
-        display_name: Return Flag
+        synonyms:
+        - return status
+        - returned
     - name: ship_date
-      description: Ship date of the line item
       expression:
-      - dialect: Databricks
-        sql: l_shipdate
+        dialects:
+        - dialect: DATABRICKS
+          expression: l_shipdate
+      description: Ship date of the line item
       dimension:
         is_time: true
       ai_context:
-        synonyms: [date, day, when, ship date]
-        display_name: Ship Date
+        synonyms:
+        - date
+        - day
+        - when
+        - ship date
   metrics:
   - name: net_sales
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: SUM(l_extendedprice * (1 - l_discount))
     description: Sum of extended price net of discount
-    expression:
-    - dialect: Databricks
-      sql: SUM(l_extendedprice * (1 - l_discount))
     ai_context:
-      synonyms: [net revenue, sales, net]
-      display_name: Net Sales
+      synonyms:
+      - net revenue
+      - sales
+      - net
   - name: gross_sales
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: SUM(l_extendedprice)
     description: Sum of extended price (before discount)
-    expression:
-    - dialect: Databricks
-      sql: SUM(l_extendedprice)
     ai_context:
-      synonyms: [gross revenue, gross]
-      display_name: Gross Sales
+      synonyms:
+      - gross revenue
+      - gross
   - name: units_sold
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: SUM(l_quantity)
     description: Sum of quantity across line items
-    expression:
-    - dialect: Databricks
-      sql: SUM(l_quantity)
     ai_context:
-      synonyms: [units, quantity, volume]
-      display_name: Units Sold
+      synonyms:
+      - units
+      - quantity
+      - volume
   - name: line_count
-    description: Number of line items
     expression:
-    - dialect: Databricks
-      sql: COUNT(*)
+      dialects:
+      - dialect: DATABRICKS
+        expression: COUNT(*)
+    description: Number of line items
     ai_context:
-      synonyms: [rows, line items, count]
-      display_name: Line Count
+      synonyms:
+      - rows
+      - line items
+      - count
   custom_extensions:
-    databricks:
-      metric_view_fqn: peymandemoaws_catalog.osi_demo.tpc_sales_mv
-      query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
-        GROUP BY <dims>
+  - vendor_name: DATABRICKS
+    data: '{"metric_view_fqn":"peymandemoaws_catalog.osi_demo.tpc_sales_mv","version":0.1,"query_pattern":"SELECT
+      MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters> GROUP BY <dims>"}'

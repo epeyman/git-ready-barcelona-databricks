@@ -21,7 +21,12 @@ import os
 import urllib.request
 from typing import Any
 
-from osi_bridge.translators._common import RenderedQuery, time_column, validate
+from osi_bridge.translators._common import (
+    RenderedQuery,
+    get_custom_extension,
+    time_column,
+    validate,
+)
 
 
 ENGINE_NAME = "strategy"
@@ -36,11 +41,11 @@ def build_query(
     limit: int = 1000,
 ) -> RenderedQuery:
     sm = osi_model["semantic_model"][0]
-    ext = (sm.get("custom_extensions") or {}).get("strategy") or {}
+    ext = get_custom_extension(sm.get("custom_extensions"), "strategy")
     metric_set_id = ext.get("metric_set_id") or ext.get("project_id")
     if not metric_set_id:
         raise ValueError(
-            "OSI model has no custom_extensions.strategy.metric_set_id — set it to "
+            "OSI model has no custom_extensions[vendor_name=strategy].metric_set_id — set it to "
             "the Mosaic metric set / project identifier before routing to Strategy."
         )
 

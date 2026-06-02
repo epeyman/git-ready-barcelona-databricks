@@ -16,7 +16,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import Any
 
-from osi_bridge.translators._common import RenderedQuery
+from osi_bridge.translators._common import RenderedQuery, list_extension_vendors
 
 
 _ENGINE_PRIORITY = ("databricks", "dremio", "strategy")
@@ -30,10 +30,13 @@ def _load(engine: str):
 
 
 def available_engines(osi_model: dict[str, Any]) -> list[str]:
-    """Return engines whose `custom_extensions.<engine>` block is present in
-    the OSI, ordered by the bridge's priority."""
-    ext = osi_model["semantic_model"][0].get("custom_extensions") or {}
-    return [e for e in _ENGINE_PRIORITY if e in ext]
+    """Return engines for which a `custom_extensions` entry is present in the
+    OSI, ordered by the bridge's priority. Accepts both the spec-compliant
+    array shape (`[{vendor_name, data}]`) and the legacy map shape."""
+    vendors = set(list_extension_vendors(
+        osi_model["semantic_model"][0].get("custom_extensions")
+    ))
+    return [e for e in _ENGINE_PRIORITY if e in vendors]
 
 
 def pick_engine(osi_model: dict[str, Any], hint: str | None = None) -> str:

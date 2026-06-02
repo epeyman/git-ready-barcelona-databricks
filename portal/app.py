@@ -22,6 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 from osi_bridge import tools, translators
 from osi_bridge.auth import get_token as _refresh_databricks_token
+from osi_bridge.translators._common import get_ai_context, get_custom_extension
 from osi_bridge.discovery import list_metric_views
 from osi_bridge.exporter import db_to_osi, fetch_metric_view_yaml
 from osi_bridge.importer import import_osi
@@ -128,12 +129,12 @@ def get_model(name: str) -> dict[str, Any]:
         "name": name,
         "description": sm.get("description"),
         "source": (sm.get("datasets") or [{}])[0].get("source"),
-        "ai_context": sm.get("ai_context", {}),
+        "ai_context": get_ai_context(sm),
         "metrics": tools.list_metrics(REGISTRY, name),
         "dimensions": [DimensionSummary(**d).model_dump() for d in tools.list_dimensions(REGISTRY, name)],
-        "fqn": (sm.get("custom_extensions") or {}).get("databricks", {}).get("metric_view_fqn"),
-        "odcs": (sm.get("custom_extensions") or {}).get("odcs", {}),
-        "confluence": (sm.get("custom_extensions") or {}).get("confluence", {}),
+        "fqn": get_custom_extension(sm.get("custom_extensions"), "databricks").get("metric_view_fqn"),
+        "odcs": get_custom_extension(sm.get("custom_extensions"), "odcs"),
+        "confluence": get_custom_extension(sm.get("custom_extensions"), "confluence"),
         "engines": engines,
         "default_engine": engines[0],
     }
@@ -177,7 +178,8 @@ def post_chat(req: ChatRequest) -> ChatResponse:
 
 
 def _model_owner(osi: dict[str, Any]) -> str | None:
-    return ((osi["semantic_model"][0].get("custom_extensions") or {}).get("odcs") or {}).get("owner")
+    sm = osi["semantic_model"][0]
+    return get_custom_extension(sm.get("custom_extensions"), "odcs").get("owner")
 
 
 def _persist_request(

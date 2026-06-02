@@ -1,104 +1,115 @@
-# orders_multivendor — same TPC-H orders OSI, but declares custom_extensions
-# for three engines simultaneously. The dispatcher uses Databricks by default
-# (first in priority order) and `query_metric(..., engine='dremio'|'strategy')`
-# routes to the other two. This is the OSI-is-the-contract demo.
-version: '1.0'
+version: 0.2.0.dev0
 semantic_model:
 - name: orders_multivendor_mv
   description: TPC-H orders contract addressable on three engines simultaneously.
   ai_context:
-    instructions: Use these metrics for any quantitative question about orders or
-      revenue. The same semantic contract is served by Databricks (default),
-      Dremio, or Strategy Mosaic — pick via the engine argument.
+    instructions: "Use these metrics for any quantitative question about orders or\
+      \ revenue. The same semantic contract is served by Databricks (default), Dremio,\
+      \ or Strategy Mosaic \u2014 pick via the engine argument."
   datasets:
-  - name: orders_multivendor_mv
+  - name: orders_mv
     source: samples.tpch.orders
     fields:
     - name: order_priority
-      description: TPC-H order priority — 1-URGENT through 5-LOW
       expression:
-      - dialect: Databricks
-        sql: o_orderpriority
-      - dialect: Dremio
-        sql: o_orderpriority
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_orderpriority
+        - dialect: ANSI_SQL
+          expression: o_orderpriority
+      description: "TPC-DS order priority \u2014 1-URGENT through 5-LOW"
       dimension:
         is_time: false
       ai_context:
-        synonyms: [priority, urgency]
-        display_name: Order Priority
+        synonyms:
+        - priority
+        - urgency
     - name: order_status
-      description: O = open, F = fulfilled, P = in-progress
       expression:
-      - dialect: Databricks
-        sql: o_orderstatus
-      - dialect: Dremio
-        sql: o_orderstatus
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_orderstatus
+        - dialect: ANSI_SQL
+          expression: o_orderstatus
+      description: O = open, F = fulfilled, P = in-progress
       dimension:
         is_time: false
       ai_context:
-        synonyms: [status, state]
-        display_name: Order Status
-    - name: order_date
-      description: Date the order was placed
+        synonyms:
+        - status
+        - state
+    - name: clerk
       expression:
-      - dialect: Databricks
-        sql: o_orderdate
-      - dialect: Dremio
-        sql: o_orderdate
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_clerk
+        - dialect: ANSI_SQL
+          expression: o_clerk
+      description: Clerk who processed the order
+      dimension:
+        is_time: false
+    - name: order_date
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_orderdate
+        - dialect: ANSI_SQL
+          expression: o_orderdate
+      description: Date the order was placed
       dimension:
         is_time: true
       ai_context:
-        synonyms: [date, when, period]
-        display_name: Order Date
+        synonyms:
+        - date
+        - when
+        - period
   metrics:
   - name: total_revenue
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: SUM(o_totalprice)
+      - dialect: ANSI_SQL
+        expression: SUM(o_totalprice)
     description: Sum of order totals across all orders
-    expression:
-    - dialect: Databricks
-      sql: SUM(o_totalprice)
-    - dialect: Dremio
-      sql: SUM(o_totalprice)
     ai_context:
-      synonyms: [revenue, sales, gmv, top line]
-      display_name: Total Revenue
+      synonyms:
+      - revenue
+      - sales
+      - gmv
+      - top line
   - name: order_count
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: COUNT(*)
+      - dialect: ANSI_SQL
+        expression: COUNT(*)
     description: Distinct count of orders
-    expression:
-    - dialect: Databricks
-      sql: COUNT(*)
-    - dialect: Dremio
-      sql: COUNT(*)
     ai_context:
-      synonyms: [orders, number of orders, volume]
-      display_name: Order Count
+      synonyms:
+      - orders
+      - number of orders
+      - volume
   - name: avg_order_value
-    description: Mean of o_totalprice across orders
     expression:
-    - dialect: Databricks
-      sql: AVG(o_totalprice)
-    - dialect: Dremio
-      sql: AVG(o_totalprice)
+      dialects:
+      - dialect: DATABRICKS
+        expression: AVG(o_totalprice)
+      - dialect: ANSI_SQL
+        expression: AVG(o_totalprice)
+    description: Mean of o_totalprice across orders
     ai_context:
-      synonyms: [aov, average sale, basket size]
-      display_name: Average Order Value
+      synonyms:
+      - aov
+      - average sale
+      - basket size
   custom_extensions:
-    databricks:
-      metric_view_fqn: peymandemoaws_catalog.osi_demo.orders_mv
-      query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
-        GROUP BY <dims>
-    dremio:
-      table: prod.sales.orders
-      query_pattern: SELECT <metric_expressions>, <dims> FROM <table> WHERE <filters>
-        GROUP BY <dims>
-    strategy:
-      metric_set_id: orders_mosaic
-      # Optional name -> Mosaic object ID maps. The adapter falls back to the
-      # OSI name when no override is present.
-      metric_id_map:
-        total_revenue: "MET-1001"
-        order_count:   "MET-1002"
-        avg_order_value: "MET-1003"
-      attribute_id_map:
-        order_priority: "ATT-201"
-        order_status:   "ATT-202"
-        order_date:     "ATT-203"
+  - vendor_name: DATABRICKS
+    data: '{"metric_view_fqn":"peymandemoaws_catalog.osi_demo.orders_mv","version":"1.1","query_pattern":"SELECT
+      MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters> GROUP BY <dims>"}'
+  - vendor_name: DREMIO
+    data: '{"table":"tpc_h.orders","comment":"Set DREMIO_BASE_URL/DREMIO_TOKEN to
+      execute; otherwise the adapter returns the rendered SQL."}'
+  - vendor_name: STRATEGY
+    data: '{"metric_set_id":"tpch-orders-metric-set","metric_id_map":{"total_revenue":"rev.orders.total","order_count":"rev.orders.count","avg_order_value":"rev.orders.aov","urgent_revenue":"rev.orders.urgent","distinct_customers":"rev.orders.unique_customers"},"attribute_id_map":{"order_priority":"attr.orders.priority","order_status":"attr.orders.status","clerk":"attr.orders.clerk","order_date":"attr.orders.date"}}'

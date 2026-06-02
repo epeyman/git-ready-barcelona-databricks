@@ -29,9 +29,14 @@ def engine_fqn(osi_model: dict[str, Any], engine: str) -> str | None:
     """Look up the engine-specific identifier from custom_extensions.
 
     Databricks → metric_view_fqn, Dremio → table, Strategy → metric_set_id.
-    Returns None if the engine block is missing.
+    Returns None if the engine block is missing. Accepts both the
+    spec-compliant array-of-objects shape and the legacy vendor-keyed map.
     """
-    ext = (osi_model["semantic_model"][0].get("custom_extensions") or {}).get(engine) or {}
+    from osi_bridge.translators._common import get_custom_extension
+
+    ext = get_custom_extension(
+        osi_model["semantic_model"][0].get("custom_extensions"), engine
+    )
     if engine == "databricks":
         return ext.get("metric_view_fqn")
     if engine == "dremio":

@@ -12,7 +12,13 @@ from typing import Any
 
 from databricks import sql
 
-from osi_bridge.translators._common import RenderedQuery, render_filter, time_column, validate
+from osi_bridge.translators._common import (
+    RenderedQuery,
+    get_custom_extension,
+    render_filter,
+    time_column,
+    validate,
+)
 
 
 ENGINE_NAME = "databricks"
@@ -27,10 +33,10 @@ def build_query(
     limit: int = 1000,
 ) -> RenderedQuery:
     sm = osi_model["semantic_model"][0]
-    ext = (sm.get("custom_extensions") or {}).get("databricks") or {}
+    ext = get_custom_extension(sm.get("custom_extensions"), "databricks")
     fqn = ext.get("metric_view_fqn")
     if not fqn:
-        raise ValueError("OSI model has no custom_extensions.databricks.metric_view_fqn")
+        raise ValueError("OSI model has no custom_extensions[vendor_name=DATABRICKS].metric_view_fqn")
 
     validate(sm, metrics, dimensions, filters)
 

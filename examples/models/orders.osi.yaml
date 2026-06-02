@@ -1,88 +1,95 @@
-# TPC-H orders — OSI v1.0 stub. Regenerate by running
-#   notebooks/01_create_metric_view.py    (creates the Metric View)
-# and then
-#   python -m osi_bridge.exporter \
-#     --fqn "$OSI_CATALOG.$OSI_SCHEMA.orders_mv" \
-#     --out examples/models/orders.osi.yaml \
-#     --metadata osi_bridge/metadata/orders.yaml
-version: '1.0'
+version: 0.2.0.dev0
 semantic_model:
 - name: orders_mv
-  description: Sales orders semantic model — OSI demo
+  description: "Sales orders semantic model \u2014 OSI demo"
   ai_context:
-    instructions: Semantic model exported from a Databricks Metric View. Use the metrics
-      defined here for any quantitative question about orders or revenue.
+    instructions: Semantic model exported from a Databricks Metric View on TPC-H orders.
+      Use the metrics here for any quantitative question about orders or revenue.
   datasets:
   - name: orders_mv
     source: samples.tpch.orders
     fields:
     - name: order_priority
-      description: TPC-DS order priority — 1-URGENT through 5-LOW
       expression:
-      - dialect: Databricks
-        sql: o_orderpriority
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_orderpriority
+      description: "TPC-DS order priority \u2014 1-URGENT through 5-LOW"
       dimension:
         is_time: false
       ai_context:
-        synonyms: [priority, urgency]
-        display_name: Order Priority
+        synonyms:
+        - priority
+        - urgency
     - name: order_status
+      expression:
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_orderstatus
       description: O = open, F = fulfilled, P = in-progress
-      expression:
-      - dialect: Databricks
-        sql: o_orderstatus
       dimension:
         is_time: false
       ai_context:
-        synonyms: [status, state]
-        display_name: Order Status
+        synonyms:
+        - status
+        - state
     - name: clerk
-      description: Clerk who processed the order
       expression:
-      - dialect: Databricks
-        sql: o_clerk
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_clerk
+      description: Clerk who processed the order
       dimension:
         is_time: false
-      ai_context:
-        synonyms: []
-        display_name: Clerk
     - name: order_date
-      description: Date the order was placed
       expression:
-      - dialect: Databricks
-        sql: o_orderdate
+        dialects:
+        - dialect: DATABRICKS
+          expression: o_orderdate
+      description: Date the order was placed
       dimension:
         is_time: true
       ai_context:
-        synonyms: [date, when, period]
-        display_name: Order Date
+        synonyms:
+        - date
+        - when
+        - period
   metrics:
   - name: total_revenue
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: SUM(o_totalprice)
     description: Sum of order totals across all orders
-    expression:
-    - dialect: Databricks
-      sql: SUM(o_totalprice)
     ai_context:
-      synonyms: [revenue, sales, gmv, top line]
-      display_name: Total Revenue
+      synonyms:
+      - revenue
+      - sales
+      - gmv
+      - top line
   - name: order_count
+    expression:
+      dialects:
+      - dialect: DATABRICKS
+        expression: COUNT(*)
     description: Distinct count of orders
-    expression:
-    - dialect: Databricks
-      sql: COUNT(*)
     ai_context:
-      synonyms: [orders, number of orders, volume]
-      display_name: Order Count
+      synonyms:
+      - orders
+      - number of orders
+      - volume
   - name: avg_order_value
-    description: Mean of o_totalprice across orders
     expression:
-    - dialect: Databricks
-      sql: AVG(o_totalprice)
+      dialects:
+      - dialect: DATABRICKS
+        expression: AVG(o_totalprice)
+    description: Mean of o_totalprice across orders
     ai_context:
-      synonyms: [aov, average sale, basket size]
-      display_name: Average Order Value
+      synonyms:
+      - aov
+      - average sale
+      - basket size
   custom_extensions:
-    databricks:
-      metric_view_fqn: peymandemoaws_catalog.osi_demo.orders_mv
-      query_pattern: SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters>
-        GROUP BY <dims>
+  - vendor_name: DATABRICKS
+    data: '{"metric_view_fqn":"peymandemoaws_catalog.osi_demo.orders_mv","version":0.1,"query_pattern":"SELECT
+      MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters> GROUP BY <dims>"}'

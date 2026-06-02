@@ -18,7 +18,12 @@ from typing import Any
 
 from osi_bridge import translators
 from osi_bridge.registry import Registry
-from osi_bridge.translators._common import RenderedQuery
+from osi_bridge.translators._common import RenderedQuery, get_ai_context, get_custom_extension
+
+
+def _odcs_ext(sm: dict[str, Any]) -> dict[str, Any]:
+    """ODCS data-contract block from custom_extensions (dual-shape)."""
+    return get_custom_extension(sm.get("custom_extensions"), "odcs")
 
 
 def run_sql(sql_text: str) -> list[dict[str, Any]]:
@@ -45,8 +50,8 @@ def list_models(registry: Registry) -> list[dict[str, Any]]:
             "source": (sm.get("datasets") or [{}])[0].get("source"),
             "metric_count": len(sm.get("metrics", [])),
             "dimension_count": sum(len(ds.get("fields", [])) for ds in sm.get("datasets", [])),
-            "owner": (sm.get("custom_extensions") or {}).get("odcs", {}).get("owner"),
-            "domain": (sm.get("custom_extensions") or {}).get("odcs", {}).get("domain"),
+            "owner": _odcs_ext(sm).get("owner"),
+            "domain": _odcs_ext(sm).get("domain"),
             "engines": engines,
             "default_engine": engines[0],
         })
@@ -60,7 +65,7 @@ def list_metrics(registry: Registry, model: str | None = None) -> list[dict[str,
     for name in target:
         sm = registry.get(name)["semantic_model"][0]
         for m in sm.get("metrics", []):
-            ai = m.get("ai_context", {}) or {}
+            ai = get_ai_context(m)
             out.append({
                 "model": name,
                 "name": m["name"],
@@ -77,16 +82,17 @@ def list_dimensions(
     """Dimensions of one model. `metric` is informational only."""
     sm = registry.get(model)["semantic_model"][0]
     fields = sm["datasets"][0]["fields"]
-    return [
-        {
+    rows = []
+    for f in fields:
+        ai = get_ai_context(f)
+        rows.append({
             "name": f["name"],
-            "display_name": (f.get("ai_context") or {}).get("display_name"),
+            "display_name": ai.get("display_name"),
             "is_time": (f.get("dimension") or {}).get("is_time", False),
-            "synonyms": (f.get("ai_context") or {}).get("synonyms", []),
+            "synonyms": ai.get("synonyms", []),
             "description": f.get("description"),
-        }
-        for f in fields
-    ]
+        })
+    return rows
 
 
 def query_metric(

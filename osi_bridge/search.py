@@ -21,6 +21,7 @@ import os
 from typing import Any
 
 from osi_bridge.registry import Registry
+from osi_bridge.translators._common import get_ai_context, get_custom_extension
 
 
 def _score_metric(metric: dict[str, Any], model: str, q: str) -> float:
@@ -34,10 +35,11 @@ def _score_metric(metric: dict[str, Any], model: str, q: str) -> float:
     if not q:
         return 0.0
     score = 0.0
+    ai = get_ai_context(metric)
     name = (metric.get("name") or "").lower()
-    display = ((metric.get("ai_context") or {}).get("display_name") or "").lower()
+    display = (ai.get("display_name") or "").lower()
     description = (metric.get("description") or "").lower()
-    synonyms = [s.lower() for s in (metric.get("ai_context") or {}).get("synonyms", [])]
+    synonyms = [s.lower() for s in (ai.get("synonyms") or [])]
     model_lc = model.lower()
 
     if q == name:
@@ -77,7 +79,7 @@ def search_metrics(registry: Registry, query: str, *, limit: int = 20) -> list[d
             score = _score_metric(m, model_name, q)
             if score <= 0:
                 continue
-            ai = m.get("ai_context") or {}
+            ai = get_ai_context(m)
             hits.append((
                 score,
                 {
@@ -98,9 +100,9 @@ def _catalog_summary(registry: Registry) -> str:
     lines: list[str] = []
     for name, osi in registry.items():
         sm = osi["semantic_model"][0]
-        ext = sm.get("custom_extensions") or {}
-        owner = (ext.get("odcs") or {}).get("owner") or "unknown"
-        domain = (ext.get("odcs") or {}).get("domain") or "unknown"
+        odcs = get_custom_extension(sm.get("custom_extensions"), "odcs")
+        owner = odcs.get("owner") or "unknown"
+        domain = odcs.get("domain") or "unknown"
         metric_names = [m["name"] for m in sm.get("metrics", [])]
         dim_names = [f["name"] for f in sm["datasets"][0]["fields"]]
         lines.append(
