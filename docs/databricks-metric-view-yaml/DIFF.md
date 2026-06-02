@@ -15,9 +15,9 @@ Field-by-field comparison of what each format models natively, what's shared, an
 ## Concrete side-by-side examples in this directory
 
 - `orders.metric_view.yaml` — native Databricks MV YAML for the TPC-H orders model.
-- `orders.osi.yaml` — OSI translation of the same model. *Note: takes some liberties with the OSI core spec (uses a vendor-keyed `custom_extensions` map and an inline dataset `filter`); these are flagged below.*
+- `orders.osi.yaml` — OSI translation of the same model. **Validates against `core-spec/osi-schema.json`.**
 - `lineitem.metric_view.yaml` — joined line-item sales with window + materialization.
-- `lineitem.osi.yaml` — OSI translation of the same model.
+- `lineitem.osi.yaml` — OSI translation of the same model. **Validates against `core-spec/osi-schema.json`.** Models the join as an OSI `relationship` (FK graph); the SQL `joins[*].on` predicate, the rolling-7-day window measure, and the materialization block ride along as JSON-encoded `data` strings under `custom_extensions[*].vendor_name: "DATABRICKS"`.
 
 ---
 
@@ -189,14 +189,20 @@ semantic_model[*].custom_extensions[?vendor_name=='DATABRICKS']
 
 ---
 
-## 8. Honest disclosure about this repo's OSI files
+## 8. Validation
 
-`orders.osi.yaml` and `lineitem.osi.yaml` in this directory **take some liberties with the OSI core spec**, inherited from the original hackathon prototype. Specifically:
+The OSI files in this directory (`orders.osi.yaml`, `lineitem.osi.yaml`) are validated against the live JSON schema (`core-spec/osi-schema.json`) using `jsonschema` Draft 2020-12 — both pass with zero errors. Quick local re-validation:
 
-- They use a **map-shaped** `custom_extensions: {databricks: {...}}` rather than the spec's array-of-objects shape `custom_extensions: [{vendor_name: "DATABRICKS", data: ...}]`.
-- They put `filter` directly on the dataset, where the spec does not define a `filter` field.
-- They use **mixed-case** `dialect: Databricks` rather than the spec's uppercase enum `DATABRICKS`.
-- They nest expressions as a flat array `expression: [{dialect, sql}]` rather than the spec's nested `expression.dialects[*].{dialect, expression}` with the field literally named `expression` (not `sql`).
-- They include a `display_name` field on fields/metrics, which has no first-class equivalent in OSI.
+```bash
+pip install jsonschema pyyaml
+python3 -c "
+import json, yaml
+from jsonschema import Draft202012Validator
+schema = json.loads(open('osi-schema.json').read())
+doc = yaml.safe_load(open('orders.osi.yaml'))
+errors = sorted(Draft202012Validator(schema).iter_errors(doc), key=lambda e: e.path)
+print('VALID' if not errors else f'{len(errors)} errors')
+"
+```
 
-These are pragmatic choices made for the prototype, not bugs in the spec. To produce truly spec-compliant OSI from this repo, the YAMLs and the converter would need a pass to align with `core-spec/spec.yaml` exactly. Recommend doing that before sharing these as canonical OSI artifacts with the OSI working group.
+The original prototype YAMLs in this repo's `examples/models/` directory (produced by `osi_bridge/exporter.py`) take some liberties with the spec — map-shaped `custom_extensions`, dataset-level `filter`, mixed-case `dialect: Databricks`, flat `expression` array, and a `display_name` field. Those are pragmatic prototype choices, not bugs in the spec, and they would need a pass to align with `core-spec/osi-schema.json` before being shared as canonical OSI artifacts.
