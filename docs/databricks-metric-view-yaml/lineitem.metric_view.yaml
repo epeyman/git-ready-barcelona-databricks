@@ -1,46 +1,137 @@
-# Databricks Unity Catalog Metric View — native YAML
-# Source: samples.tpch.lineitem joined with samples.tpch.orders
-# Demonstrates: join, optional filter, multiple measures incl. derived measures.
-# Registered via:
+# Databricks Unity Catalog Metric View — native YAML (spec 1.1)
+# Source: samples.tpch.lineitem (TPC-H benchmark line-items) joined to orders.
+# Demonstrates: star-schema join with `rely.at_most_one_match`, derived measure,
+# FILTER (WHERE …) measure, window measure (rolling), and the experimental
+# `materialization` block for query acceleration.
+#
+# Register via:
 #   CREATE OR REPLACE VIEW <catalog>.<schema>.tpc_sales_mv
 #     WITH METRICS LANGUAGE YAML
 #     COMMENT 'TPC-H benchmark sales line-items semantic model'
 #   AS $$ <this file> $$;
 
-version: 0.1
+version: 1.1
+comment: TPC-H benchmark line-item sales — sales rolled up by ship mode, return flag, ship date
 source: samples.tpch.lineitem
 
-# Demonstrating the join syntax — joins enrich the source with attributes
-# from another UC table, then dimensions and measures can reference both.
 joins:
-  - name: o
+  - name: orders
     source: samples.tpch.orders
-    'on': samples.tpch.lineitem.l_orderkey = o.o_orderkey
+    on: source.l_orderkey = orders.o_orderkey
+    # Each line item belongs to exactly one order → many-to-one. Safe to set rely.
+    rely:
+      at_most_one_match: true
 
-# Filter applies to the joined row set
-filter: o.o_orderstatus IN ('O', 'F')
+# Filter applies to the joined row set; references columns under both namespaces.
+filter: orders.o_orderstatus IN ('O', 'F')
 
 dimensions:
   - name: ship_mode
     expr: l_shipmode
+    comment: Carrier mode (AIR, RAIL, SHIP, TRUCK, MAIL, REG AIR, FOB)
+    display_name: Ship Mode
+    synonyms: [carrier, mode, shipping]
+
   - name: return_flag
     expr: l_returnflag
+    comment: 'R = Returned, A = Accepted, N = Not yet'
+    display_name: Return Flag
+    synonyms: [returned, return status]
+
   - name: line_status
     expr: l_linestatus
+    comment: 'O = Open, F = Final'
+    display_name: Line Status
+
   - name: ship_date
     expr: l_shipdate
+    comment: Date the line item was shipped
+    display_name: Ship Date
+    synonyms: [shipped, ship_date, date]
+
   - name: order_priority
-    expr: o.o_orderpriority
+    expr: orders.o_orderpriority
+    comment: Priority of the parent order (joined from orders)
+    display_name: Order Priority
+    synonyms: [priority]
 
 measures:
   - name: gross_sales
     expr: SUM(l_extendedprice)
+    comment: Gross extended price before discounts
+    display_name: Gross Sales
+    synonyms: [gross revenue, list price total]
+
   - name: net_sales
-    # Derived measure — uses an arbitrary aggregate SQL expression
+    # Derived measure — net of line-level discount
     expr: SUM(l_extendedprice * (1 - l_discount))
+    comment: Extended price net of discount
+    display_name: Net Sales
+    synonyms: [net revenue, post-discount sales]
+
   - name: units_sold
     expr: SUM(l_quantity)
+    comment: Total units shipped across all line items
+    display_name: Units Sold
+    synonyms: [units, quantity, volume]
+
   - name: line_count
     expr: COUNT(*)
+    comment: Number of line items
+    display_name: Line Count
+
   - name: avg_discount
     expr: AVG(l_discount)
+    comment: Average discount rate across line items
+    display_name: Avg Discount
+
+  # FILTER (WHERE …) — return-only net sales without touching the global filter
+  - name: returned_net_sales
+    expr: SUM(l_extendedprice * (1 - l_discount)) FILTER (WHERE l_returnflag = 'R')
+    comment: Net sales from line items that were returned
+    display_name: Returned Net Sales
+    synonyms: [returns value]
+
+  # Window measure — rolling 7-day net sales, semi-additive on the last shipping day
+  - name: rolling_7d_net_sales
+    expr: SUM(l_extendedprice * (1 - l_discount))
+    comment: Trailing 7-day net sales aggregated as of the latest ship date in window
+    display_name: 7-Day Rolling Net Sales
+    synonyms: [rolling sales, 7d sales]
+    window:
+      - order: ship_date
+        range: trailing 7 day
+        semiadditive: last
+
+# Experimental: pre-materialize hot rollups so common queries skip the full scan.
+# Materializations refresh on the schedule below.
+materialization:
+  schedule: every 6 hours
+  mode: relaxed
+  materialized_views:
+    # Unaggregated copy of the joined row set
+    - name: baseline
+      type: unaggregated
+
+    # Daily rollup keyed by ship date × ship mode for top-line dashboards
+    - name: daily_ship_mode_rollup
+      type: aggregated
+      dimensions:
+        - ship_date
+        - ship_mode
+      measures:
+        - gross_sales
+        - net_sales
+        - units_sold
+        - line_count
+
+    # Priority × return flag rollup for ad-hoc segmentation
+    - name: priority_return_rollup
+      type: aggregated
+      dimensions:
+        - order_priority
+        - return_flag
+      measures:
+        - net_sales
+        - returned_net_sales
+        - line_count

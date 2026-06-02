@@ -1,12 +1,17 @@
-# Databricks Unity Catalog Metric View — native YAML
+# Databricks Unity Catalog Metric View — native YAML (spec 1.1)
 # Source: samples.tpch.orders (TPC-H / TPC-DS aligned)
-# Registered via:
+# Demonstrates: top-level comment, dimensions and measures with the full
+# 1.1 metadata surface (comment, display_name, synonyms), FILTER (WHERE …)
+# measure pattern.
+#
+# Register via:
 #   CREATE OR REPLACE VIEW <catalog>.<schema>.orders_mv
 #     WITH METRICS LANGUAGE YAML
 #     COMMENT 'TPC-H orders semantic model'
 #   AS $$ <this file> $$;
 
-version: 0.1
+version: 1.1
+comment: TPC-H orders semantic model — sales orders rolled up by priority, status, clerk, and date
 source: samples.tpch.orders
 
 # Optional global filter — restrict to orders in known statuses
@@ -15,19 +20,55 @@ filter: o_orderstatus IN ('O', 'F', 'P')
 dimensions:
   - name: order_priority
     expr: o_orderpriority
+    comment: TPC-DS order priority — 1-URGENT through 5-LOW
+    display_name: Order Priority
+    synonyms: [priority, urgency]
+
   - name: order_status
     expr: o_orderstatus
+    comment: 'O = Open, F = Fulfilled, P = In-progress'
+    display_name: Order Status
+    synonyms: [status, state]
+
   - name: clerk
     expr: o_clerk
+    comment: Clerk who processed the order
+    display_name: Clerk
+
   - name: order_date
     expr: o_orderdate
+    comment: Order placement date
+    display_name: Order Date
+    synonyms: [date, when, period]
 
 measures:
   - name: total_revenue
     expr: SUM(o_totalprice)
+    comment: Sum of order totals across all orders
+    display_name: Total Revenue
+    synonyms: [revenue, sales, gmv, top line]
+
   - name: order_count
     expr: COUNT(*)
+    comment: Number of orders
+    display_name: Order Count
+    synonyms: [orders, volume]
+
   - name: distinct_customers
     expr: COUNT(DISTINCT o_custkey)
+    comment: Number of distinct customers placing orders
+    display_name: Unique Customers
+    synonyms: [unique customers, distinct customers]
+
   - name: avg_order_value
     expr: AVG(o_totalprice)
+    comment: Average order total
+    display_name: Avg Order Value
+    synonyms: [aov, average order]
+
+  # FILTER (WHERE …) pattern — measure scoped to a slice without changing the global filter
+  - name: urgent_revenue
+    expr: SUM(o_totalprice) FILTER (WHERE o_orderpriority = '1-URGENT')
+    comment: Total revenue from urgent-priority orders only
+    display_name: Urgent Revenue
+    synonyms: [urgent sales, p1 revenue]

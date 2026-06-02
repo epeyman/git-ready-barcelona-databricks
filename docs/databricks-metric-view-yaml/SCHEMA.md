@@ -1,91 +1,155 @@
 # Databricks Unity Catalog Metric View — YAML Schema Reference
 
-The native YAML format used inside the `CREATE OR REPLACE VIEW … WITH METRICS LANGUAGE YAML AS $$…$$` DDL on a Databricks SQL warehouse.
+Authoritative source: [Metric view YAML syntax reference (Microsoft Learn)](https://learn.microsoft.com/en-us/azure/databricks/business-semantics/metric-views/yaml-reference). The same spec is documented for AWS and GCP. This file mirrors the spec at version **`1.1`** (current).
 
-## Top-level structure
+## Top-level fields
 
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `version` | string | Yes | YAML spec version. Current = `1.1`. Older metric views may show `0.1`. |
+| `comment` | string | No | View-level description. Surfaces in Unity Catalog. |
+| `source` | string | Yes | Any table-like UC asset (3-part FQN), another metric view (composability), or an inline SQL `SELECT`. |
+| `filter` | string | No | SQL boolean expression applied to every query. |
+| `joins` | array | No | Star/snowflake joins to other tables or SQL queries. Supports nesting. |
+| `dimensions` | array | Conditional | Required if `measures` is absent. |
+| `measures` | array | Conditional | Required if `dimensions` is absent. |
+| `materialization` | object | No (experimental) | Configure materialized-view acceleration with a refresh schedule. |
+
+## `source`
+
+Three-part FQN:
 ```yaml
-version: 0.1                       # required — currently "0.1"
-source: <fqn | SELECT statement>   # required — either a fully-qualified UC table name OR an inline SELECT
-filter: <SQL boolean expression>   # optional — global WHERE clause applied to source rows
-joins:                             # optional — additional tables joined into the view
-  - name: <alias>
-    source: <fqn>
-    'on': <SQL join predicate>
-dimensions:                        # required — at least one dimension
-  - name: <unique-identifier>
-    expr: <SQL expression>
-    window:                          # optional — for time dimensions, granularity controls
-      - granularity: day | week | month | quarter | year
-measures:                          # required — at least one measure
-  - name: <unique-identifier>
-    expr: <aggregate SQL expression>   # SUM, COUNT, AVG, MIN, MAX, COUNT(DISTINCT …), etc.
-    window:                          # optional — windowed measures (rolling, period-over-period)
-      - granularity: day | week | month | quarter | year
-        order: <SQL expression>
-        range: <SQL interval>
+source: samples.tpch.orders
 ```
 
-## Field semantics
-
-| Field | Required | Notes |
-|---|---|---|
-| `version` | Yes | Currently `0.1`. Reserved for forward compatibility. |
-| `source` | Yes | Three-part FQN (`catalog.schema.table`) is preferred. Inline SQL is allowed but recommend pinning a fixed source for governance. |
-| `filter` | No | Applied to every query against the view. Useful for soft-delete or tenancy filters. Does NOT apply to base-table grants — use UC row filters for that. |
-| `joins[*].name` | Yes (when `joins` present) | Alias used to qualify columns from the joined table inside dimension/measure expressions. |
-| `joins[*].source` | Yes (when `joins` present) | FQN of the joined table. |
-| `joins[*].on` | Yes (when `joins` present) | SQL join predicate. Note YAML quoting: `on` is a reserved word, use `'on'`. |
-| `dimensions[*].name` | Yes | Unique identifier; what consumers reference in `GROUP BY` and `WHERE`. |
-| `dimensions[*].expr` | Yes | SQL expression evaluated per row. Most commonly a column reference, but can be any deterministic expression. |
-| `dimensions[*].window[*].granularity` | No | Restricts a time dimension to a fixed grain in queries. |
-| `measures[*].name` | Yes | Unique identifier; queried via `MEASURE(<name>)`. |
-| `measures[*].expr` | Yes | Aggregate SQL expression. Engine validates this is an aggregate; non-aggregates are rejected at CREATE time. |
-| `measures[*].window[*]` | No | Defines windowed / rolling / period-over-period semantics. |
-
-## How consumers query a metric view
-
-Always through `MEASURE()`, never raw column references on the measure side:
-
-```sql
-SELECT
-  order_priority,                       -- dimension reference
-  MEASURE(total_revenue)                -- measure must go through MEASURE()
-FROM peymandemoaws_catalog.osi_demo.orders_mv
-WHERE order_status = 'F'                -- dimensions are queryable in WHERE
-GROUP BY order_priority
-ORDER BY MEASURE(total_revenue) DESC;
+Or inline SQL (set `RELY` on PK/FK constraints for performance):
+```yaml
+source: |
+  SELECT * FROM samples.tpch.orders o
+  LEFT JOIN samples.tpch.customer c ON o.o_custkey = c.c_custkey
 ```
 
-The engine rewrites `MEASURE(total_revenue)` into the underlying aggregate expression `SUM(o_totalprice)` from the YAML.
+## `joins[*]`
 
-## DDL — how the YAML is registered as a Metric View
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Alias used to qualify columns from the joined table. |
+| `source` | string | Yes | FQN of the joined table, or a SQL `SELECT`. |
+| `on` | string | Conditional | Boolean join predicate. Required if `using` is not specified. |
+| `using` | array | Conditional | List of shared column names. Required if `on` is not specified. |
+| `joins` | array | No | Nested joins for snowflake-schema modeling. |
+| `rely.at_most_one_match` | bool | No (default `false`) | Many-to-one promise. When `true`, the analyzer plans more efficient queries. **Not validated at runtime** — set only if guaranteed; otherwise aggregates return wrong results. |
+
+Note: the source-side rows are referenced under the namespace `source`; the joined-side rows under the join's `name`. The example reference uses `source.l_orderkey = orders.o_orderkey`. If no prefix is given inside an `on`, it defaults to the joined table.
+
+## `dimensions[*]`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Column alias used in `SELECT` / `WHERE` / `GROUP BY`. |
+| `expr` | string | Yes | SQL expression returning a scalar. May reference source columns, joined columns, or previously-defined dimensions. |
+| `comment` | string | No | Per-dimension description. Surfaces in UC. |
+| `display_name` | string | No (1.1+) | Visualization label, ≤ 255 chars. |
+| `format` | map | No (1.1+) | Display format spec. |
+| `synonyms` | array of string | No (1.1+) | Up to 10 alternate names for AI/BI discovery, each ≤ 255 chars. |
+
+Dimensions do **not** have `window`. Window specs live on measures.
+
+## `measures[*]`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Alias; query via `MEASURE(<name>)`. |
+| `expr` | string | Yes | Aggregate SQL expression. Supports `FILTER (WHERE …)` to scope a measure. |
+| `comment` | string | No | Per-measure description. |
+| `display_name` | string | No (1.1+) | Visualization label, ≤ 255 chars. |
+| `format` | map | No (1.1+) | Display format spec. |
+| `synonyms` | array | No (1.1+) | Up to 10 alternate names for AI/BI discovery. |
+| `window` | array | No (experimental) | Windowed / cumulative / semiadditive aggregations. See below. |
+
+## `measures[*].window[*]`
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `order` | string | Yes | Dimension that orders the window. Should be deterministic (date/timestamp). |
+| `range` | string | Yes | Window extent — see values below. |
+| `semiadditive` | string | Yes | `first` or `last` — semi-additive aggregation method. |
+| `offset` | string | No (DBR 18.1 + YAML 1.1) | Shift the window frame, e.g. `-12 month`, `1 year`, `-3 days`, `7 day`. `null` if shifted frame falls outside data. No effect on `range: all`. |
+
+**Supported `range` values:**
+
+- `current` — rows whose order value equals the anchor row
+- `cumulative` — rows with order value ≤ anchor
+- `trailing <n> <unit> [inclusive | exclusive]` — e.g. `trailing 7 day`
+- `leading <n> <unit> [inclusive | exclusive]` — e.g. `leading 3 month`
+- `all` — every row regardless of order
+
+`inclusive`/`exclusive` requires DBR 18.1 + YAML 1.1; default is `exclusive`.
+
+## `materialization` (experimental)
+
+Top-level fields:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `schedule` | string | Yes | Refresh schedule (same syntax as MV `SCHEDULE` clause, e.g. `every 6 hours` / `cron …`). `TRIGGER ON UPDATE` not supported. |
+| `mode` | string | Yes | Must be `relaxed`. |
+| `materialized_views` | array | Yes | One or more materializations. |
+
+`materialized_views[*]`:
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `name` | string | Yes | Identifier of the materialization. |
+| `type` | string | Yes | `aggregated` or `unaggregated`. |
+| `dimensions` | array of dim names | Conditional | Required for `aggregated` if `measures` is empty. |
+| `measures` | array of measure names | Conditional | Required for `aggregated` if `dimensions` is empty. |
+
+`unaggregated` materializes the base row set; `aggregated` materializes a pre-aggregated rollup along the listed dimensions/measures so matching queries skip the full scan.
+
+## DDL — registering the YAML as a Metric View
 
 ```sql
-CREATE OR REPLACE VIEW <catalog>.<schema>.<view_name>
+CREATE OR REPLACE VIEW <catalog>.<schema>.<name>
   WITH METRICS
   LANGUAGE YAML
   COMMENT '<optional description>'
 AS $$
-<yaml content here>
+<yaml content>
 $$;
 ```
 
-## What's NOT carried in this YAML (governance lives elsewhere)
+Update with `ALTER VIEW <name> AS $$ … $$;` — see the spec's "Upgrade to YAML 1.1" section for how YAML comments vs UC comments interact.
 
-- **Row filters and column masks** — applied to base tables via separate UC SQL function objects, not in this YAML.
-- **Grants / access control** — managed via `GRANT … ON VIEW …` on the metric view object.
-- **Synonyms / display names / descriptions for AI agents** — Databricks Metric View YAML does not currently carry these. Companion `agent_metadata.yaml` files (or the OSI v1.0 wrapper) are how they ride along.
+## Query semantics — `MEASURE()`
 
-## Reference: published spec
+```sql
+SELECT
+  order_priority,                       -- dimension
+  MEASURE(total_revenue)                -- measure must always go through MEASURE()
+FROM <catalog>.<schema>.orders_mv
+WHERE order_status = 'F'
+GROUP BY order_priority
+ORDER BY MEASURE(total_revenue) DESC;
+```
 
-- Metric view creation: https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-create-metric-view
-- Query semantics (`MEASURE()`): https://docs.databricks.com/aws/en/sql/language-manual/functions/measure
-- DESCRIBE TABLE EXTENDED output for round-trip export: https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-aux-describe-table
+## YAML formatting gotchas (from the spec)
 
-## Two concrete TPC-DS examples in this directory
+- **Column names with spaces** — wrap in backticks: `` expr: '`First Name`' `` (single-quote the value).
+- **Backtick-starting expressions** — wrap the whole thing in double quotes; YAML cannot start an unquoted value with a backtick.
+- **Colons inside expressions** — always double-quote the whole expression: `expr: "CASE WHEN col = 'A:B' THEN 1 END"`.
+- **Multi-line expressions** — use a block scalar `|`:
+  ```yaml
+  expr: |
+    CASE WHEN revenue > 100 THEN 'High' ELSE 'Low' END
+  ```
 
-- `orders.metric_view.yaml` — flat sales orders, basic dimensions + measures
-- `lineitem.metric_view.yaml` — line-item sales with more advanced measures and a join example
+## What's NOT in this YAML (lives elsewhere in UC)
 
-Both are derived from the public `samples.tpch.*` tables shipped in every Databricks workspace.
+- Row filters and column masks — applied to base tables via separate UC SQL function objects.
+- Grants — `GRANT … ON VIEW …` on the metric view object.
+
+## Concrete examples in this directory
+
+- `orders.metric_view.yaml` — flat orders model, all 1.1 metadata fields shown (comment, display_name, synonyms).
+- `lineitem.metric_view.yaml` — join (with `rely`), `FILTER (WHERE …)` measure, **window measure**, and a **`materialization` block**.
