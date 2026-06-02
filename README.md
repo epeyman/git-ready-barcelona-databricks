@@ -65,6 +65,7 @@ For OSI standardization work — direct field-level comparison against MetricFlo
 | File | What it is |
 |------|------------|
 | [`docs/databricks-metric-view-yaml/SCHEMA.md`](docs/databricks-metric-view-yaml/SCHEMA.md) | Annotated field reference for Databricks Metric View YAML spec **1.1**: top-level, dimensions, measures, joins (with `rely`), window measures, **materialization**, and YAML formatting gotchas. |
+| [`docs/databricks-metric-view-yaml/DIFF.md`](docs/databricks-metric-view-yaml/DIFF.md) | **Feature-by-feature diff between Databricks Metric View 1.1 and OSI v1.0** — what each models natively, what only Databricks has (joins, window, materialization, FILTER, format), what only OSI has (multi-dialect expressions, vendor namespaces, AI-instructions), and the translator-cheatsheet table. |
 | [`orders.metric_view.yaml`](docs/databricks-metric-view-yaml/orders.metric_view.yaml) | Native UC Metric View YAML for `samples.tpch.orders` — full 1.1 metadata (comment, display_name, synonyms), plus a `FILTER (WHERE …)` measure. |
 | [`orders.osi.yaml`](docs/databricks-metric-view-yaml/orders.osi.yaml) | OSI v1.0 translation of the same model. |
 | [`lineitem.metric_view.yaml`](docs/databricks-metric-view-yaml/lineitem.metric_view.yaml) | Native UC Metric View YAML for `samples.tpch.lineitem` — star-schema join with `rely.at_most_one_match`, `FILTER` measure, **windowed rolling 7-day measure**, and a **`materialization` block** with one unaggregated + two aggregated rollups. |
