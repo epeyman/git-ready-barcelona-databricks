@@ -7,10 +7,13 @@ Field-by-field comparison of what each format models natively, what's shared, an
 | Format | Version cited | URL |
 |---|---|---|
 | Databricks Metric View YAML | **1.1** (current) | [Metric view YAML syntax reference (Microsoft Learn)](https://learn.microsoft.com/en-us/azure/databricks/business-semantics/metric-views/yaml-reference) |
-| Open Semantic Interchange core spec | **`0.2.0.dev0`** (current dev), **`0.1.1`** (latest released) | [`core-spec/spec.yaml` on github.com/open-semantic-interchange/OSI](https://github.com/open-semantic-interchange/OSI/blob/main/core-spec/spec.yaml) |
+| Open Semantic Interchange core spec (YAML-form) | **`0.2.0.dev0`** (current dev), **`0.1.1`** (latest released) | [`core-spec/spec.yaml`](https://github.com/open-semantic-interchange/OSI/blob/main/core-spec/spec.yaml) |
+| Open Semantic Interchange JSON schema (machine-validatable) | matches the spec, more permissive on `ai_context` | [`core-spec/osi-schema.json`](https://github.com/open-semantic-interchange/OSI/blob/main/core-spec/osi-schema.json) |
 | Canonical OSI example | Same repo | [`examples/tpcds_semantic_model.yaml`](https://github.com/open-semantic-interchange/OSI/blob/main/examples/tpcds_semantic_model.yaml) |
 
 > **Version disambiguation:** Public announcements about "OSI v1.0 finalized" (January 2026) refer to a project / initiative milestone. The spec schema itself currently shows `version: 0.2.0.dev0` in the core spec file. Latest fully-released schema is `0.1.1`. There is no `1.0.0` schema version in the repository as of this write-up.
+>
+> **Two specifications, one source of truth:** The OSI repo ships both a human-readable `core-spec/spec.yaml` and a machine-validatable `core-spec/osi-schema.json`. They are *mostly* aligned, but the JSON schema is more permissive in a few places (notably `ai_context`, which the YAML form declares as `string` while the JSON schema allows `oneOf: [string, object]`). When in doubt, the JSON schema is the more accurate representation — it's what the canonical example references via its `yaml-language-server` directive, and it's what `core-spec/osi-schema.json` is used for at validation time.
 
 ## Concrete side-by-side examples in this directory
 
@@ -41,7 +44,7 @@ Field-by-field comparison of what each format models natively, what's shared, an
 | AI context per metric | `measures[*].comment` + `synonyms` | `semantic_model[*].metrics[*].ai_context` (spec line 210) |
 | Vendor extension hook | `comment` (the only extensibility lever; no structured custom-extension block) | `custom_extensions[*].{vendor_name, data}` at model / dataset / relationship / field / metric levels (spec lines 56-58, 109-111, 145-148, 183-186, 213-215) |
 
-**Note on AI metadata shape mismatch:** Databricks Metric View 1.1 introduced `display_name`, `synonyms`, and `format` as separate top-level keys on each dimension/measure. OSI does **not** define a top-level `display_name` or `format` — these live (informally) inside `ai_context`. The canonical TPC-DS example demonstrates `ai_context.synonyms` but never uses a `display_name` field.
+**Note on AI metadata shape mismatch:** Databricks Metric View 1.1 introduced `display_name`, `synonyms`, and `format` as separate top-level keys on each dimension/measure. OSI handles only one of these natively: per the JSON schema, `AIContext` (when used in its object form) defines three keys — `instructions`, `synonyms`, and `examples` — so `synonyms` has a clear home at `ai_context.synonyms`. **`display_name` and `format` have no OSI equivalent at any level** (no first-class field, and the AIContext object doesn't define them either — though `additionalProperties: true` means a vendor could carry them as informal keys). The canonical TPC-DS example demonstrates `ai_context.synonyms` and `ai_context.instructions` but never uses `display_name`.
 
 ---
 
@@ -61,9 +64,9 @@ Capabilities present in the native Metric View YAML (1.1) that the OSI core spec
 | **Window frame offset** | `offset: -12 month` etc. | ❌ Not modeled. |
 | **Materialization** auto-acceleration | `materialization` block with `schedule`, `mode: relaxed`, `materialized_views[*]` (`aggregated` / `unaggregated`) | ❌ Not modeled. |
 | **Per-metric `FILTER (WHERE …)` scope** | Inline in `expr` SQL string | ⚠️ Captured inside the SQL string only — OSI has no structured per-metric filter field. |
-| **Display format spec** | `dimensions[*].format` / `measures[*].format` (1.1) | ❌ Not modeled. |
-| **`display_name` as a separate field** | `dimensions[*].display_name` / `measures[*].display_name` (1.1, ≤ 255 chars) | ❌ Not modeled. OSI puts this informally inside `ai_context`. |
-| **`synonyms` as a separate field** | `dimensions[*].synonyms` / `measures[*].synonyms` (1.1, ≤ 10 items, ≤ 255 chars each) | ⚠️ Not a separate field — sits inside `ai_context` per the canonical example. |
+| **Display format spec** | `dimensions[*].format` / `measures[*].format` (1.1) | ❌ Not modeled anywhere (not even inside `ai_context`). |
+| **`display_name` as a separate field** | `dimensions[*].display_name` / `measures[*].display_name` (1.1, ≤ 255 chars) | ❌ Not modeled anywhere. AIContext doesn't define it either — would have to be carried under `additionalProperties` or `custom_extensions`. |
+| **`synonyms` as a separate field** | `dimensions[*].synonyms` / `measures[*].synonyms` (1.1, ≤ 10 items, ≤ 255 chars each) | ⚠️ Not a separate top-level field, but **is** a defined sub-key under `ai_context` (when AIContext is in object form). Maps cleanly. |
 | **Composability** — metric view as source | `source: <another metric view fqn>` | ⚠️ Not formalized. OSI references other models by name; semantics are vendor-defined. |
 | **Inline SQL source** | `source: SELECT … FROM …` (with `RELY` constraint hint) | ⚠️ `datasets[*].source: string` — format is `database.schema.table` or `query` per the spec, but the latter is loosely defined. |
 | **DDL integration** | `CREATE OR REPLACE VIEW … WITH METRICS LANGUAGE YAML AS $$…$$;` — first-class UC object | ❌ OSI is a contract, not a DDL. |
@@ -96,7 +99,7 @@ Where both formats express the same semantic but with different syntax. Critical
 | Concept | Databricks form | OSI form (verbatim per `core-spec/spec.yaml`) |
 |---|---|---|
 | Top-level description | `comment: <string>` | `semantic_model[*].description: <string>` |
-| AI-context container | `comment` only | `ai_context` — spec says `string`, canonical example uses a structured object with `instructions` and `synonyms` |
+| AI-context container | `comment` only | `ai_context` — JSON schema allows `oneOf: [string, object{instructions, synonyms, examples, …additionalProperties}]`; YAML-form spec.yaml shows only the string form. Canonical example always uses the object form. |
 | Dimension/measure SQL | `expr: <single SQL string>` | `expression:\n  dialects:\n    - dialect: DATABRICKS\n      expression: <sql>` |
 | Dialect identifier | implicit (always Databricks) | UPPER_CASE enum: `ANSI_SQL`, `SNOWFLAKE`, `DATABRICKS`, `MDX`, `TABLEAU`, `MAQL` (default `ANSI_SQL`) |
 | Source | `source: cat.schema.tbl` | `datasets[*].source: cat.schema.tbl` |
@@ -116,8 +119,8 @@ Where the OSI core spec would need to grow if it wants to faithfully represent D
 3. **First-class `materialization` block** — schedule + materialized-rollup definitions. Snowflake dynamic tables, Databricks metric-view materialization, and Strategy Mosaic all have versions of this.
 4. **First-class per-metric `filter` field** — for the `FILTER (WHERE …)` measure pattern, rather than burying it in the expression string.
 5. **First-class `format`** on fields and metrics.
-6. **First-class `display_name` and `synonyms`** as siblings of `description` rather than only living inside `ai_context`. This would close the metadata-shape gap with Databricks MV 1.1.
-7. **Tighter `ai_context` schema.** The spec file declares `ai_context: string` but the canonical example uses it as a structured object. Either tighten the spec to allow both, or formalize the keys (`instructions`, `synonyms`, `example_queries`).
+6. **First-class `display_name`** as a sibling of `description`. `synonyms` already has a defined home at `ai_context.synonyms`; `display_name` and `format` currently have no defined home at all.
+7. **Align `core-spec/spec.yaml` with `core-spec/osi-schema.json`.** The JSON schema already allows `ai_context` in both string and object form (with documented sub-keys `instructions`, `synonyms`, `examples`); the YAML-form spec file declares only the string form, which is more restrictive and easier to misread. Filed as upstream issue [open-semantic-interchange/OSI#141](https://github.com/open-semantic-interchange/OSI/issues/141).
 
 Until these land, a Databricks ↔ OSI converter has to carry the gap fields under `custom_extensions`.
 
@@ -174,17 +177,25 @@ semantic_model[*].metrics[*].expression
   .dialects[?dialect=='DATABRICKS'].expression      ↔       measures[*].expr
 semantic_model[*].metrics[*].description            ↔       measures[*].comment
 semantic_model[*].metrics[*].ai_context.synonyms    ↔       measures[*].synonyms (1.1)
-semantic_model[*].metrics[*].custom_extensions[?vendor_name=='DATABRICKS']
-                                                    ↔       measures[*].window  (carried verbatim)
 
-semantic_model[*].relationships[*]                  ↔       joins[*]  (lossy — relationships are FK
-                                                                graph; joins are SQL operations)
+semantic_model[*].relationships[*]                  ↔       joins[*]  (lossy — relationships are
+                                                                FK graph; joins are SQL operations)
+
+# Reminder: custom_extensions[*].data is a STRING (JSON-encoded) per the
+# spec. The converter has to JSON.parse() it before reading the keys below.
+# (See `lineitem.osi.yaml` in this directory for a worked example.)
 
 semantic_model[*].custom_extensions[?vendor_name=='DATABRICKS']
-  .joins                                            ↔       joins[*]   (carried verbatim by this prototype)
-  .materialization                                  ↔       materialization (carried verbatim)
-  .filter                                           ↔       filter (top-level)
-  .metric_view_fqn                                  ↔       (composes the CREATE VIEW DDL, not in YAML body)
+  .data → JSON.parse() →                            ↔
+    "joins"                                         ↔       joins[*]         (carried verbatim)
+    "materialization"                               ↔       materialization  (carried verbatim)
+    "filter"                                        ↔       filter (top-level)
+    "metric_view_fqn"                               ↔       (composes the CREATE VIEW DDL)
+    "version"                                       ↔       version (top-level)
+
+semantic_model[*].metrics[*].custom_extensions[?vendor_name=='DATABRICKS']
+  .data → JSON.parse() →                            ↔
+    "window"                                        ↔       measures[*].window  (carried verbatim)
 ```
 
 ---
