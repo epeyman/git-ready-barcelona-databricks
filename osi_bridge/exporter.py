@@ -1,9 +1,23 @@
-"""Databricks Metric View → OSI v1.0 YAML.
+"""Databricks Metric View → OSI YAML (spec-compliant).
 
-In the current Databricks Metric View YAML schema, columns/measures support
-only `name`, `expr`, `window`. Richer annotations (synonyms, display names,
-descriptions) live in a companion file (`agent_metadata.yaml`) that this
-exporter merges at write time.
+Produces OSI documents that validate against `core-spec/osi-schema.json`
+from github.com/open-semantic-interchange/OSI:
+
+- `version: "0.2.0.dev0"` (current OSI dev spec).
+- Expressions nested as `expression.dialects[*].{dialect, expression}`
+  with `dialect: DATABRICKS` (uppercase enum value).
+- `custom_extensions` as an array of `{vendor_name, data}` where `data`
+  is a JSON-encoded string carrying Databricks-specific fields that OSI
+  core doesn't model yet (joins, filter, window measures, materialization,
+  the source view FQN, the native MV YAML version).
+- `ai_context` in its object form with `instructions` (model level) and
+  `synonyms` (field/metric level) — these are the two AIContext sub-keys
+  that have a defined home in the OSI JSON schema.
+- No `display_name`, no dataset-level `filter`, no mixed-case dialect
+  strings — those were prototype-era liberties.
+
+Companion `osi_bridge/metadata/<view>.yaml` files merge in synonyms,
+descriptions, and the `is_time` flag at export time.
 """
 from __future__ import annotations
 
@@ -17,11 +31,13 @@ from databricks import sql
 
 METADATA_DIR = Path(__file__).parent / "metadata"
 
+OSI_VERSION = "0.2.0.dev0"
+DATABRICKS_DIALECT = "DATABRICKS"
+
 
 def _default_metadata_for(fqn: str) -> Path | None:
     """Look up `osi_bridge/metadata/<view_name>.yaml` based on the FQN's last part."""
     view = fqn.split(".")[-1]
-    # Strip a trailing `_mv` so metric_view `orders_mv` maps to `orders.yaml`.
     stem = view[:-3] if view.endswith("_mv") else view
     candidates = [METADATA_DIR / f"{view}.yaml", METADATA_DIR / f"{stem}.yaml"]
     for c in candidates:
@@ -47,62 +63,101 @@ def fetch_metric_view_yaml(fqn: str) -> dict[str, Any]:
     return yaml.safe_load(view_text)
 
 
+def _expr(sql_text: str) -> dict[str, Any]:
+    """Wrap a single Databricks SQL expression in the OSI expression shape."""
+    return {"dialects": [{"dialect": DATABRICKS_DIALECT, "expression": sql_text}]}
+
+
+def _ai_context(synonyms: list[str] | None, instructions: str | None = None) -> dict[str, Any] | None:
+    """Build an AIContext object. Returns None if there's nothing to carry."""
+    body: dict[str, Any] = {}
+    if instructions:
+        body["instructions"] = instructions
+    if synonyms:
+        body["synonyms"] = list(synonyms)
+    return body or None
+
+
 def db_to_osi(mv: dict[str, Any], fqn: str, agent_meta: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Translate a parsed Databricks Metric View YAML into a spec-compliant OSI document."""
     name = fqn.split(".")[-1]
     am = agent_meta or {"dimensions": {}, "metrics": {}}
 
     def dim_block(d: dict[str, Any]) -> dict[str, Any]:
         meta = am.get("dimensions", {}).get(d["name"], {})
-        return {
+        out: dict[str, Any] = {
             "name": d["name"],
-            "description": meta.get("description", d["name"]),
-            "expression": [{"dialect": "Databricks", "sql": d["expr"]}],
-            "dimension": {"is_time": meta.get("is_time", False)},
-            "ai_context": {
-                "synonyms": meta.get("synonyms", []),
-                "display_name": meta.get("display_name", d["name"]),
-            },
+            "expression": _expr(d["expr"]),
+            "description": meta.get("description") or d["name"],
+            "dimension": {"is_time": bool(meta.get("is_time", False))},
         }
+        ctx = _ai_context(meta.get("synonyms"))
+        if ctx:
+            out["ai_context"] = ctx
+        return out
 
     def metric_block(m: dict[str, Any]) -> dict[str, Any]:
         meta = am.get("metrics", {}).get(m["name"], {})
-        return {
+        out: dict[str, Any] = {
             "name": m["name"],
-            "description": meta.get("description", m["name"]),
-            "expression": [{"dialect": "Databricks", "sql": m["expr"]}],
-            "ai_context": {
-                "synonyms": meta.get("synonyms", []),
-                "display_name": meta.get("display_name", m["name"]),
-            },
+            "expression": _expr(m["expr"]),
+            "description": meta.get("description") or m["name"],
         }
+        ctx = _ai_context(meta.get("synonyms"))
+        if ctx:
+            out["ai_context"] = ctx
+        # Window measures aren't first-class in OSI core — carry as DATABRICKS extension.
+        if m.get("window"):
+            out["custom_extensions"] = [
+                {
+                    "vendor_name": DATABRICKS_DIALECT,
+                    "data": json.dumps({"window": m["window"]}, separators=(",", ":")),
+                }
+            ]
+        return out
 
     description = am.get("description") or mv.get("comment") or f"Semantic model for {name}"
     instructions = am.get("ai_instructions") or (
         f"Semantic model exported from Databricks Metric View {fqn}. "
         "Use the metrics defined here for any quantitative question against this dataset."
     )
-    return {
-        "version": "1.0",
-        "semantic_model": [{
-            "name": name,
-            "description": description,
-            "ai_context": {"instructions": instructions},
-            "datasets": [{
+
+    # Databricks-specific top-level config (filter, joins, materialization, mv FQN)
+    # goes into a single custom_extensions entry, JSON-encoded.
+    db_payload: dict[str, Any] = {
+        "metric_view_fqn": fqn,
+        "version": mv.get("version", "1.1"),
+        "query_pattern": (
+            "SELECT MEASURE(<metric>), <dims> FROM <fqn> WHERE <filters> GROUP BY <dims>"
+        ),
+    }
+    for key in ("filter", "joins", "materialization"):
+        if mv.get(key) is not None:
+            db_payload[key] = mv[key]
+
+    sm: dict[str, Any] = {
+        "name": name,
+        "description": description,
+        "ai_context": {"instructions": instructions},
+        "datasets": [
+            {
                 "name": name,
                 "source": mv["source"],
                 "fields": [dim_block(d) for d in mv.get("dimensions", [])],
-            }],
-            "metrics": [metric_block(m) for m in mv.get("measures", [])],
-            "custom_extensions": {
-                "databricks": {
-                    "metric_view_fqn": fqn,
-                    "query_pattern": (
-                        "SELECT MEASURE(<metric>), <dims> FROM <fqn> "
-                        "WHERE <filters> GROUP BY <dims>"
-                    ),
-                }
-            },
-        }],
+            }
+        ],
+        "metrics": [metric_block(m) for m in mv.get("measures", [])],
+        "custom_extensions": [
+            {
+                "vendor_name": DATABRICKS_DIALECT,
+                "data": json.dumps(db_payload, separators=(",", ":")),
+            }
+        ],
+    }
+
+    return {
+        "version": OSI_VERSION,
+        "semantic_model": [sm],
     }
 
 
